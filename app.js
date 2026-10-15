@@ -9,7 +9,7 @@
   const COMING_SOON = [
     { title: 'El or La?', subtitle: 'Boy words and girl words' },
     { title: '-AR verbs', subtitle: 'trabajar, cargar, necesitar' },
-    { title: 'On the job', subtitle: 'Talk to customers about their junk' },
+    { title: 'On the job: the phone call', subtitle: 'Book a pickup over the phone' },
   ];
   const PRAISE = ['¡Correcto!', '¡Muy bien!', '¡Excelente!', '¡Eso es!', '¡Perfecto!'];
 
@@ -89,6 +89,7 @@
   // Question ids use the question text, so editing a lesson doesn't scramble the deck.
   function questionId(lessonId, s) { return `${lessonId}|q|${s.prompt || s.en || s.say}`; }
   function gameCardId(lessonId, c) { return `${lessonId}|g|${c.s}`; }
+  function talkLineId(lessonId, line) { return `${lessonId}|t|${line.them}`; }
 
   // ---------- spoken Spanish ----------
   let voice = null;
@@ -100,10 +101,11 @@
     pickVoice();
     speechSynthesis.onvoiceschanged = pickVoice;
   }
-  function say(text, slow) {
+  function say(text, slow, queue) {
     if (!('speechSynthesis' in window) || !text) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text.replace(/<[^>]+>/g, '').replace(/_+/g, ' '));
+    if (!queue) speechSynthesis.cancel();
+    const clean = text.replace(/<[^>]+>/g, '').replace(/_+/g, ' ').replace(/\p{Extended_Pictographic}|️/gu, '');
+    const u = new SpeechSynthesisUtterance(clean);
     u.lang = voice ? voice.lang : 'es-MX';
     if (voice) u.voice = voice;
     u.rate = slow ? 0.6 : 0.9;
@@ -160,6 +162,7 @@
     return text.replace('___', word ? `<span class="blank filled">${word}</span>` : '<span class="blank">&nbsp;</span>');
   }
   function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+  function hasGame(L) { return L.steps.some(s => s.type === 'game'); }
 
   // ---------- home ----------
   function showHome() {
@@ -172,10 +175,16 @@
       </header>
       ${streakStrip(save)}
       ${reviewCard(save)}
+      <div class="tools">
+        <button class="tool rules-btn"><span>📖</span><b>Rules</b><small>Look anything up</small></button>
+        <button class="tool gym-btn"><span>🏋️</span><b>Verb gym</b><small>Practice conjugating</small></button>
+      </div>
       <section class="lessons"></section>
       <p class="foot-note">Turn your sound on. Tap 🔊 anywhere to hear the Spanish.</p>`;
     const reviewBtn = app.querySelector('.review-card:not([disabled])');
     if (reviewBtn) reviewBtn.addEventListener('click', startReview);
+    app.querySelector('.rules-btn').addEventListener('click', openRules);
+    app.querySelector('.gym-btn').addEventListener('click', showGymSetup);
     const list = app.querySelector('.lessons');
     LESSONS.forEach((L, i) => {
       const rec = save.lessons[L.id];
@@ -183,7 +192,7 @@
       card.className = 'lesson' + (rec ? ' done' : '');
       card.innerHTML = `<span class="num">${rec ? '✓' : i + 1}</span>
         <span class="info"><b>${L.title}</b><small>${L.subtitle} · ${L.minutes} min</small>
-        ${rec ? `<small class="best">Best: ${rec.right}/${rec.asked} first try · game ${rec.game} pts</small>` : ''}</span>`;
+        ${rec ? `<small class="best">Best: ${rec.right}/${rec.asked} first try${hasGame(L) ? ` · game ${rec.game} pts` : ''}</small>` : ''}</span>`;
       card.addEventListener('click', () => startLesson(L));
       list.appendChild(card);
     });
@@ -198,8 +207,8 @@
     const n = currentStreak(save);
     const doneToday = save.streak && save.streak.last === dayKey();
     const msg = doneToday ? 'Done for today ✓'
-      : n ? 'Do a lesson or review today to keep it going'
-      : 'Finish a lesson or review to start a streak';
+      : n ? 'A lesson, a review or 10 gym reps keeps it going'
+      : 'Finish a lesson, a review or 10 gym reps to start one';
     return `<div class="streak-strip${doneToday ? ' lit' : ''}">
       <span class="flame">🔥</span><span><b>${n} day${n === 1 ? '' : 's'}</b><small>${msg}</small></span></div>`;
   }
@@ -248,12 +257,14 @@
 
     const pct = Math.round(run.i / run.steps.length * 100);
     app.innerHTML = `
-      <div class="top"><button class="quit" aria-label="Leave lesson">✕</button><div class="bar"><i style="width:${pct}%"></i></div></div>
+      <div class="top"><button class="quit" aria-label="Leave lesson">✕</button><div class="bar"><i style="width:${pct}%"></i></div>
+        <button class="book" aria-label="Rules">📖</button></div>
       <div class="stage"></div>
       <div class="foot"></div>`;
     app.querySelector('.quit').addEventListener('click', () => {
       if (confirm('Leave this lesson? You will start it over next time.')) { stopGame(); showHome(); }
     });
+    app.querySelector('.book').addEventListener('click', openRules);
     RENDER[s.type](s, app.querySelector('.stage'), app.querySelector('.foot'));
     window.scrollTo(0, 0);
   }
@@ -286,6 +297,23 @@
     if (kind === 'q') {
       const s = L.steps.find(x => (x.prompt || x.en || x.say) === key);
       return s ? Object.assign({}, s, { reviewId: id, isReview: true, warmup: false }) : null;
+    }
+    if (kind === 't') {
+      // A conversation reply he got wrong comes back as "what do you say back?"
+      for (const talk of L.steps.filter(x => x.type === 'talk')) {
+        const line = talk.lines.find(x => x.them === key);
+        if (!line) continue;
+        const good = line.choices.find(c => c.good);
+        return {
+          type: 'choice', reviewId: id, isReview: true,
+          prompt: `${talk.who.emoji} “${line.them}”`, en: `${line.en} What do you say back?`,
+          sayAfter: good.es,
+          options: line.choices.map(c => ({ text: c.es, correct: !!c.good, why: c.why })),
+          explain: good.note,
+          rule: 'On the job',
+        };
+      }
+      return null;
     }
     const game = L.steps.find(x => x.type === 'game');
     const c = game && game.pool.find(x => x.s === key);
@@ -343,6 +371,21 @@
     if (sayText) setTimeout(() => say(sayText), ok ? 300 : 500);
   }
 
+  // A teaching card. Used in lessons and again on the Rules page.
+  function teachHTML(s) {
+    return `
+      <p class="kicker">${s.kicker || 'Learn'}</p>
+      <h2>${s.title}</h2>
+      ${s.body ? `<div class="body">${s.body}</div>` : ''}
+      ${s.rows ? `<div class="rows">${s.rows.map(r => `
+        <div class="row">
+          ${r.tag ? `<span class="tag">${r.tag}</span>` : ''}
+          <div class="row-text"><b>${r.es}</b><small>${r.en}</small></div>
+          ${spk(r.say || r.es)}
+        </div>`).join('')}</div>` : ''}
+      ${s.trick ? `<div class="trick">💡 ${s.trick}</div>` : ''}`;
+  }
+
   // ---------- step types ----------
   const RENDER = {
     intro(s, stage, foot) {
@@ -369,17 +412,7 @@
     },
 
     teach(s, stage, foot) {
-      stage.innerHTML = `
-        <p class="kicker">${s.kicker || 'Learn'}</p>
-        <h2>${s.title}</h2>
-        ${s.body ? `<div class="body">${s.body}</div>` : ''}
-        ${s.rows ? `<div class="rows">${s.rows.map(r => `
-          <div class="row">
-            ${r.tag ? `<span class="tag">${r.tag}</span>` : ''}
-            <div class="row-text"><b>${r.es}</b><small>${r.en}</small></div>
-            ${spk(r.say || r.es)}
-          </div>`).join('')}</div>` : ''}
-        ${s.trick ? `<div class="trick">💡 ${s.trick}</div>` : ''}`;
+      stage.innerHTML = teachHTML(s);
       continueButton(foot, s.button || 'Got it');
     },
 
@@ -406,7 +439,7 @@
         let full = s.say;
         if (!s.listen) {
           stage.querySelector('.prompt').innerHTML = blank(s.prompt, right.text);
-          full = s.prompt.replace('___', right.text);
+          full = s.sayAfter || s.prompt.replace('___', right.text);
         }
         score(s, chosen.correct);
         feedback(foot, chosen.correct, chosen.correct ? s.explain : chosen.why, chosen.correct ? null : right.text, s.rule, full);
@@ -474,6 +507,99 @@
         <p class="center">${s.howto}</p>`;
       foot.innerHTML = '<button class="btn">Start!</button>';
       foot.querySelector('.btn').addEventListener('click', () => playSort(s, stage, foot));
+    },
+
+    // A conversation: the customer talks, Andrew picks what to say back.
+    // A bad pick gets a reaction, costs some of her mood, and he picks again.
+    talk(s, stage, foot) {
+      const FACES = ['😠', '😕', '🙂', '😀'];
+      const MOODS = ['angry', 'annoyed', 'happy', 'very happy'];
+      let line = 0, mood = 3, hints = false;
+      foot.classList.add('sticky');
+      stage.innerHTML = `
+        <div class="talk-head"><span class="avatar">${s.who.emoji}</span>
+          <span class="who"><b>${s.who.name}</b><small>${s.title}</small></span><span class="mood">${FACES[mood]}</span></div>
+        <div class="chat"></div>`;
+      const chat = stage.querySelector('.chat'), moodEl = stage.querySelector('.mood');
+
+      function bubble(cls, es, en) {
+        const b = document.createElement('div');
+        b.className = 'bubble ' + cls;
+        b.innerHTML = `<span class="es">${es}</span>${en ? `<span class="en">${en}</span>` : ''}`;
+        if (en && cls === 'them') {
+          b.insertAdjacentHTML('beforeend', '<span class="tap-hint">tap for English</span>');
+          b.addEventListener('click', () => b.classList.toggle('show-en'));
+        }
+        chat.appendChild(b);
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      function sheet(ok, text, then) {
+        foot.innerHTML = `<div class="sheet ${ok ? 'good' : 'bad'}">
+          <h3>${ok ? pick(PRAISE) : 'Oops!'}</h3><p>${text}</p>
+          <div class="sheet-row"><button class="btn">${ok ? 'Continue' : 'Try again'}</button></div></div>`;
+        foot.querySelector('.btn').addEventListener('click', then);
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      function showLine() {
+        const L = s.lines[line];
+        if (!L) return finish();
+        if (L.narrate) bubble('narrate', L.narrate);
+        bubble('them', L.them, L.en);
+        say(L.them);
+        choose(L, shuffle(L.choices), new Set(), true);
+      }
+
+      function choose(L, order, tried, first) {
+        foot.innerHTML = `
+          <div class="talk-tools"><span class="kicker">What do you say?</span>
+            <button class="hint-toggle">${hints ? 'Hide English' : 'Show English'}</button></div>
+          <div class="options">${order.map((c, k) => `<button class="opt" data-k="${k}"${tried.has(c) ? ' disabled' : ''}>
+            ${c.es}${hints ? `<small>${c.en}</small>` : ''}</button>`).join('')}</div>`;
+        foot.querySelector('.hint-toggle').addEventListener('click', () => { hints = !hints; choose(L, order, tried, first); });
+        foot.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
+          foot.querySelectorAll('.opt').forEach(x => { x.disabled = true; });
+          const c = order[+b.dataset.k];
+          bubble(c.good ? 'me' : 'me oops', c.es);
+          say(c.es);
+          if (first) {
+            run.asked++;
+            if (c.good) run.right++;
+            else { const id = talkLineId(run.L.id, L); deckMiss(id); run.toReview.add(id); }
+          }
+          if (c.good) {
+            sfx.good();
+            sheet(true, c.note, () => { line++; showLine(); });
+            return;
+          }
+          sfx.bad();
+          tried.add(c);
+          mood = Math.max(0, mood - 1);
+          setTimeout(() => {
+            bubble('them', c.react, c.reactEn);
+            say(c.react, false, true);
+            moodEl.textContent = FACES[mood];
+            moodEl.classList.remove('bump');
+            void moodEl.offsetWidth; // restart the shake animation
+            moodEl.classList.add('bump');
+            sheet(false, c.why, () => choose(L, order, tried, false));
+          }, 700);
+        }));
+      }
+
+      function finish() {
+        const tip = s.tips.find(t => t.mood <= mood);
+        run.bonus = { value: FACES[mood], label: tip.text };
+        sfx.done();
+        bubble('narrate', `${s.who.name} is ${MOODS[mood]}. You get: <b>${tip.text}</b>`);
+        foot.innerHTML = '<button class="btn">Continue</button>';
+        foot.querySelector('.btn').addEventListener('click', next);
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      bubble('narrate', s.setup);
+      setTimeout(showLine, 600);
     },
   };
 
@@ -560,6 +686,141 @@
     show();
   }
 
+  // ---------- verbs (data in conjugation.js) ----------
+  const CONJ = window.CONJ;
+  function formsOf(g, v) { return v[2] || g.endings.map(e => v[0].slice(0, -2) + e); }
+
+  // The five forms of a verb. Regular endings are colored; one row can be highlighted.
+  function conjTable(g, v, highlight) {
+    const forms = formsOf(g, v);
+    return `<div class="conj">${CONJ.persons.map((p, i) => {
+      const html = g.endings ? `${v[0].slice(0, -2)}<em>${g.endings[i]}</em>` : forms[i];
+      return `<div class="conj-row${i === highlight ? ' hl' : ''}"><span class="p">${p.key}</span><b>${html}</b>${spk(`${p.show[0]} ${forms[i]}`)}</div>`;
+    }).join('')}</div>`;
+  }
+
+  // ---------- Rules: every rule and memory trick, open from anywhere ----------
+  function openRules() {
+    closeRules();
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML = `<div class="overlay-in">
+      <div class="ov-top"><h2>📖 Rules</h2><button class="quit" aria-label="Close">✕</button></div>
+      <p class="kicker">Verbs: present tense</p>
+      ${CONJ.groups.map(g => `<details><summary>${g.title}</summary><div class="details-in">
+        <p>${g.rule}</p>
+        ${g.trick ? `<div class="trick">💡 ${g.trick}</div>` : ''}
+        ${g.endings
+          ? `<p class="verb-head">Example: <b>${g.verbs[0][0]}</b> · ${g.verbs[0][1]}</p>${conjTable(g, g.verbs[0])}
+             <p class="small">Works the same for: ${g.verbs.slice(1).map(v => `<b>${v[0]}</b> (${v[1]})`).join(', ')}</p>`
+          : g.verbs.map(v => `<p class="verb-head"><b>${v[0]}</b> · ${v[1]}</p>${conjTable(g, v)}<p class="small">${v[3]}</p>`).join('')}
+      </div></details>`).join('')}
+      <p class="kicker">From your lessons</p>
+      ${LESSONS.map(L => {
+        const cards = L.steps.filter(s => s.type === 'teach');
+        return cards.length ? `<details><summary>${L.title}</summary><div class="details-in">
+          ${cards.map(teachHTML).join('<hr>')}
+          <p class="kicker">Memory tricks</p><div class="trick">${L.recap}</div></div></details>` : '';
+      }).join('')}
+    </div>`;
+    ov.querySelector('.quit').addEventListener('click', closeRules);
+    document.body.appendChild(ov);
+    document.body.classList.add('locked');
+  }
+  function closeRules() {
+    const ov = document.querySelector('.overlay');
+    if (ov) ov.remove();
+    document.body.classList.remove('locked');
+  }
+
+  // ---------- Verb gym: endless conjugation practice ----------
+  let gym = null;
+
+  function gymTop(title) {
+    return `<div class="top"><button class="quit" aria-label="Back">✕</button><span class="top-title">${title}</span>
+      <button class="book" aria-label="Rules">📖</button></div>`;
+  }
+  function wireTop() {
+    app.querySelector('.quit').addEventListener('click', showHome);
+    app.querySelector('.book').addEventListener('click', openRules);
+  }
+
+  function showGymSetup() {
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    app.innerHTML = `${gymTop('Verb gym')}
+      <div class="stage">
+        <div class="big-emoji">🏋️</div>
+        <h2 class="center">Verb gym</h2>
+        <p class="center">Practice as long as you want. Pick which verbs to train.</p>
+        <div class="chips">${CONJ.groups.map(g => `<button class="chip on" data-g="${g.id}">${g.title}</button>`).join('')}</div>
+        <p class="center small">Stuck? Tap 📖 at the top for the rules.</p>
+      </div>
+      <div class="foot"><button class="btn">Start</button></div>`;
+    wireTop();
+    const chips = [...app.querySelectorAll('.chip')];
+    const start = app.querySelector('.foot .btn');
+    chips.forEach(c => c.addEventListener('click', () => {
+      c.classList.toggle('on');
+      start.disabled = !chips.some(x => x.classList.contains('on'));
+    }));
+    start.addEventListener('click', () => {
+      const on = chips.filter(c => c.classList.contains('on')).map(c => c.dataset.g);
+      gym = { groups: CONJ.groups.filter(g => on.includes(g.id)), right: 0, asked: 0, streak: 0, counted: false };
+      gymQuestion();
+    });
+  }
+
+  function gymQuestion() {
+    const g = pick(gym.groups), v = pick(g.verbs), p = Math.floor(Math.random() * 5);
+    const forms = formsOf(g, v), answer = forms[p];
+    const who = pick(CONJ.persons[p].show);
+    const opts = shuffle([answer].concat(shuffle([...new Set(forms)].filter(f => f !== answer)).slice(0, 3)));
+    app.innerHTML = `${gymTop(`✓ ${gym.right}${gym.streak >= 3 ? ` · 🔥 ${gym.streak}` : ''}`)}
+      <div class="stage">
+        <p class="kicker">${g.title}</p>
+        <h2 class="prompt">${who[0].toUpperCase() + who.slice(1)} ${blank('___')}</h2>
+        <p class="hint"><b>${v[0]}</b> · ${v[1]}</p>
+        <div class="options grid2">${opts.map((o, k) => `<button class="opt" data-k="${k}">${o}</button>`).join('')}</div>
+      </div>
+      <div class="foot"></div>`;
+    wireTop();
+    const stage = app.querySelector('.stage'), foot = app.querySelector('.foot');
+    stage.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
+      const chosen = opts[+b.dataset.k];
+      const ok = chosen === answer;
+      stage.querySelectorAll('.opt').forEach(x => {
+        x.disabled = true;
+        if (opts[+x.dataset.k] === answer) x.classList.add('right');
+        else if (x !== b) x.classList.add('dim');
+      });
+      if (!ok) b.classList.add('wrong');
+      stage.querySelector('.prompt').innerHTML = `${who[0].toUpperCase() + who.slice(1)} ${blank('___', answer)}`;
+      gym.asked++;
+      if (ok) { gym.right++; gym.streak++; } else gym.streak = 0;
+
+      // Why: name whose form he picked, then the ending or tip that gives the right one.
+      const how = g.endings ? `${g.title}: for ${who}, drop -${g.ending} and add <b>-${g.endings[p]}</b>.` : v[3];
+      let why = how;
+      if (!ok) {
+        const owner = CONJ.persons[forms.indexOf(chosen)].key;
+        why = `<b>${chosen}</b> is the <b>${owner}</b> form. For <b>${who}</b> it's <b>${answer}</b>. ${how}`;
+      }
+      let bonus = '';
+      if (gym.asked >= 10 && !gym.counted) {
+        gym.counted = true;
+        bumpStreak();
+        bonus = '<p class="review-note">🔥 10 reps! Today counts for your streak.</p>';
+      }
+      ok ? sfx.good() : sfx.bad();
+      foot.innerHTML = `<div class="sheet ${ok ? 'good' : 'bad'}">
+        <h3>${ok ? pick(PRAISE) : 'Not quite'}</h3><p>${why}</p>
+        ${conjTable(g, v, p)}${bonus}
+        <div class="sheet-row"><button class="btn">Next</button></div></div>`;
+      foot.querySelector('.btn').addEventListener('click', gymQuestion);
+      setTimeout(() => say(`${who} ${answer}`), ok ? 300 : 500);
+    }));
+  }
+
   // ---------- lesson complete ----------
   function streakLine(n) {
     return `<div class="streak-strip lit"><span class="flame">🔥</span><span><b>${n} day streak!</b>
@@ -610,7 +871,8 @@
       <p class="center">Lesson complete.</p>
       <div class="stats">
         <div class="stat"><b>${run.right}/${run.asked}</b><small>right first try</small></div>
-        <div class="stat"><b>${run.game}</b><small>game points</small></div>
+        ${run.bonus ? `<div class="stat"><b>${run.bonus.value}</b><small>${run.bonus.label}</small></div>`
+          : hasGame(L) ? `<div class="stat"><b>${run.game}</b><small>game points</small></div>` : ''}
       </div>
       ${streakLine(streak)}
       ${reviewLine()}
