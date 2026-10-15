@@ -23,6 +23,73 @@
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* not saved */ }
   }
 
+  // ---------- days (local dates as YYYY-MM-DD; ?day=2026-10-20 pretends it's another day, for testing) ----------
+  const FAKE_DAY = new URLSearchParams(location.search).get('day');
+  function dayKey(d) {
+    if (!d && FAKE_DAY) return FAKE_DAY;
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function addDays(key, n) {
+    const [y, m, d] = key.split('-').map(Number);
+    return dayKey(new Date(y, m - 1, d + n));
+  }
+  function daysBetween(a, b) {
+    const [y1, m1, d1] = a.split('-').map(Number), [y2, m2, d2] = b.split('-').map(Number);
+    return Math.round((new Date(y2, m2 - 1, d2) - new Date(y1, m1 - 1, d1)) / 86400000);
+  }
+
+  // ---------- streak: days in a row with a finished lesson or review ----------
+  function currentStreak(save) {
+    const st = save.streak;
+    if (!st) return 0;
+    const today = dayKey();
+    return st.last === today || st.last === addDays(today, -1) ? st.count : 0;
+  }
+  function bumpStreak() {
+    const save = loadSave();
+    const today = dayKey();
+    const st = save.streak || { count: 0, last: null, best: 0 };
+    if (st.last !== today) {
+      st.count = st.last === addDays(today, -1) ? st.count + 1 : 1;
+      st.last = today;
+      st.best = Math.max(st.best || 0, st.count);
+    }
+    save.streak = st;
+    writeSave(save);
+    return st.count;
+  }
+
+  // ---------- review deck: missed questions come back later ----------
+  // Each missed question sits in a box. Right in review = next box, which waits longer.
+  // Right in the last box = learned, it leaves the deck. Wrong = back to box 1.
+  const BOX_WAIT = [0, 1, 3, 7, 14]; // days to wait in box 1..4
+  const LAST_BOX = BOX_WAIT.length - 1;
+  function deckMiss(id) {
+    const save = loadSave();
+    save.review = save.review || {};
+    save.review[id] = { box: 1, due: addDays(dayKey(), BOX_WAIT[1]) };
+    writeSave(save);
+  }
+  function deckHit(id) {
+    const save = loadSave();
+    const card = save.review && save.review[id];
+    if (!card) return;
+    if (card.box >= LAST_BOX) delete save.review[id];
+    else { card.box++; card.due = addDays(dayKey(), BOX_WAIT[card.box]); }
+    writeSave(save);
+  }
+  function deckStatus(save) {
+    const today = dayKey();
+    const cards = Object.values(save.review || {});
+    const due = cards.filter(c => c.due <= today).length;
+    const next = cards.filter(c => c.due > today).map(c => c.due).sort()[0];
+    return { total: cards.length, due, next };
+  }
+  // Question ids use the question text, so editing a lesson doesn't scramble the deck.
+  function questionId(lessonId, s) { return `${lessonId}|q|${s.prompt || s.en || s.say}`; }
+  function gameCardId(lessonId, c) { return `${lessonId}|g|${c.s}`; }
+
   // ---------- spoken Spanish ----------
   let voice = null;
   function pickVoice() {
@@ -103,8 +170,12 @@
         <div class="logo">¡Hola, ${NAME}!</div>
         <p class="tagline">Spanish in 10 minutes a day</p>
       </header>
+      ${streakStrip(save)}
+      ${reviewCard(save)}
       <section class="lessons"></section>
       <p class="foot-note">Turn your sound on. Tap 🔊 anywhere to hear the Spanish.</p>`;
+    const reviewBtn = app.querySelector('.review-card:not([disabled])');
+    if (reviewBtn) reviewBtn.addEventListener('click', startReview);
     const list = app.querySelector('.lessons');
     LESSONS.forEach((L, i) => {
       const rec = save.lessons[L.id];
@@ -123,11 +194,39 @@
     });
   }
 
+  function streakStrip(save) {
+    const n = currentStreak(save);
+    const doneToday = save.streak && save.streak.last === dayKey();
+    const msg = doneToday ? 'Done for today ✓'
+      : n ? 'Do a lesson or review today to keep it going'
+      : 'Finish a lesson or review to start a streak';
+    return `<div class="streak-strip${doneToday ? ' lit' : ''}">
+      <span class="flame">🔥</span><span><b>${n} day${n === 1 ? '' : 's'}</b><small>${msg}</small></span></div>`;
+  }
+
+  function whenText(day) {
+    const n = daysBetween(dayKey(), day);
+    return n <= 1 ? 'tomorrow' : `in ${n} days`;
+  }
+
+  function reviewCard(save) {
+    const d = deckStatus(save);
+    if (!d.total) return '';
+    if (d.due) {
+      return `<button class="review-card">
+        <span class="num">🔁</span>
+        <span class="info"><b>Review</b><small>${d.due} thing${d.due > 1 ? 's' : ''} you missed, ready now</small></span></button>`;
+    }
+    return `<button class="review-card" disabled>
+      <span class="num">🔁</span>
+      <span class="info"><b>Review</b><small>${d.total} thing${d.total > 1 ? 's' : ''} coming back ${whenText(d.next)}</small></span></button>`;
+  }
+
   // ---------- running a lesson ----------
   let run = null;
 
   function startLesson(L) {
-    run = { L, steps: L.steps.slice(), i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0 };
+    run = { L, steps: L.steps.slice(), i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0, toReview: new Set() };
     showStep();
   }
 
@@ -170,6 +269,64 @@
     run.asked++;
     if (ok) run.right++;
     else run.retry.push(s);
+    if (s.reviewId) ok ? deckHit(s.reviewId) : deckMiss(s.reviewId);
+    else if (!ok) { const id = questionId(run.L.id, s); deckMiss(id); run.toReview.add(id); }
+  }
+
+  // ---------- review session ----------
+  const OTHER_FORM = { soy: 'estoy', eres: 'estás', es: 'está', somos: 'estamos', son: 'están' };
+  Object.keys(OTHER_FORM).forEach(k => { OTHER_FORM[OTHER_FORM[k]] = k; });
+
+  // Turns a deck id back into a question to ask, or null if the lesson changed and it's gone.
+  function reviewStep(id) {
+    const [lessonId, kind, ...rest] = id.split('|');
+    const key = rest.join('|');
+    const L = LESSONS.find(x => x.id === lessonId);
+    if (!L) return null;
+    if (kind === 'q') {
+      const s = L.steps.find(x => (x.prompt || x.en || x.say) === key);
+      return s ? Object.assign({}, s, { reviewId: id, isReview: true, warmup: false }) : null;
+    }
+    const game = L.steps.find(x => x.type === 'game');
+    const c = game && game.pool.find(x => x.s === key);
+    if (!c) return null;
+    // A missed race sentence comes back as a two-button question.
+    const lower = c.f.toLowerCase();
+    let other = OTHER_FORM[lower] || (c.v === 'ser' ? 'está' : 'es');
+    if (c.f !== lower) other = other[0].toUpperCase() + other.slice(1);
+    return {
+      type: 'choice', reviewId: id, isReview: true,
+      prompt: c.s,
+      options: [
+        { text: c.f, correct: true },
+        { text: other, why: `This one is <b>${c.why}</b>, and ${c.why} goes with <b>${c.v}</b>.` },
+      ],
+      explain: `${c.why} goes with <b>${c.v}</b>.`,
+      rule: `${c.v.toUpperCase()} · ${c.why}`,
+    };
+  }
+
+  function startReview() {
+    const save = loadSave();
+    const today = dayKey();
+    const ids = Object.keys(save.review || {})
+      .filter(id => save.review[id].due <= today)
+      .sort((a, b) => save.review[a].box - save.review[b].box);
+    const steps = [];
+    ids.forEach(id => {
+      const s = reviewStep(id);
+      if (!s) { delete save.review[id]; return; }
+      if (steps.length < 10) steps.push(s);
+    });
+    writeSave(save);
+    if (!steps.length) return showHome();
+    run = {
+      L: { id: 'review', minutes: 3 }, review: true,
+      steps: [{ type: 'note', emoji: '🔁', title: 'Review time', body: `${steps.length} thing${steps.length > 1 ? 's' : ''} you missed before. Get one right and it comes back less often. Keep getting it right and it's learned for good.` }]
+        .concat(shuffle(steps), [{ type: 'retry' }]),
+      i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0, toReview: new Set(),
+    };
+    showStep();
   }
 
   // The green or red box after an answer: what was wrong, why, and the rule it belongs to.
@@ -228,7 +385,7 @@
 
     choice(s, stage, foot) {
       const opts = shuffle(s.options);
-      const kicker = s.isRetry ? 'Second chance' : s.kicker || (s.listen ? 'Listen. What does it mean?' : 'Pick the right word');
+      const kicker = s.isRetry ? 'Second chance' : s.isReview ? 'Review' : s.kicker || (s.listen ? 'Listen. What does it mean?' : 'Pick the right word');
       stage.innerHTML = `
         <p class="kicker">${kicker}</p>
         ${s.listen
@@ -261,7 +418,7 @@
       const picked = [];
       let checked = false;
       stage.innerHTML = `
-        <p class="kicker">${s.isRetry ? 'Second chance' : 'Build it in Spanish'}</p>
+        <p class="kicker">${s.isRetry ? 'Second chance' : s.isReview ? 'Review' : 'Build it in Spanish'}</p>
         <h2 class="prompt">${s.en}</h2>
         <div class="answer-row"></div>
         <div class="pool"></div>`;
@@ -354,7 +511,11 @@
       tagEl.textContent = `${c.v.toUpperCase()} · ${c.why}`;
       tagEl.className = 'g-tag ' + (ok ? 'ok' : 'fix');
       if (ok) { streak++; pts += streak >= 3 ? 2 : 1; sfx.good(); }
-      else { streak = 0; sfx.bad(); if (!missed.includes(c)) missed.push(c); }
+      else {
+        streak = 0;
+        sfx.bad();
+        if (!missed.includes(c)) { missed.push(c); const id = gameCardId(run.L.id, c); deckMiss(id); run.toReview.add(id); }
+      }
       ptsEl.textContent = pts;
       streakEl.textContent = streak >= 3 ? `🔥 x2` : '';
       idx++;
@@ -364,13 +525,14 @@
       if (e.key === 'ArrowLeft' || e.key === 's') answer('ser');
       if (e.key === 'ArrowRight' || e.key === 'e') answer('estar');
     }
-    function tick(now) {
+    // A plain interval, not animation frames: those pause when the app is in the background.
+    function tick() {
       if (over) return;
-      const left = Math.max(0, 1 - (now - start) / (s.seconds * 1000));
+      const left = Math.max(0, 1 - (performance.now() - start) / (s.seconds * 1000));
       timerEl.style.width = (left * 100) + '%';
-      if (left <= 0) return end();
-      requestAnimationFrame(tick);
+      if (left <= 0) end();
     }
+    const timer = setInterval(tick, 100);
     function end() {
       stopGame();
       run.game = Math.max(run.game, pts);
@@ -390,19 +552,48 @@
       foot.querySelector('.ghost').addEventListener('click', () => playSort(s, stage, foot));
       foot.querySelector('.btn:not(.ghost)').addEventListener('click', next);
     }
-    stopGame = () => { over = true; document.removeEventListener('keydown', onKey); };
+    stopGame = () => { over = true; clearInterval(timer); document.removeEventListener('keydown', onKey); };
 
     foot.querySelector('.ser').addEventListener('click', () => answer('ser'));
     foot.querySelector('.estar').addEventListener('click', () => answer('estar'));
     document.addEventListener('keydown', onKey);
     show();
-    requestAnimationFrame(tick);
   }
 
   // ---------- lesson complete ----------
+  function streakLine(n) {
+    return `<div class="streak-strip lit"><span class="flame">🔥</span><span><b>${n} day streak!</b>
+      <small>${n === 1 ? 'Come back tomorrow to make it 2.' : `Come back tomorrow to make it ${n + 1}.`}</small></span></div>`;
+  }
+
+  function reviewLine() {
+    const n = run.toReview.size;
+    return n ? `<p class="center review-note">🔁 ${n} thing${n > 1 ? 's' : ''} you missed will come back for review tomorrow.</p>` : '';
+  }
+
+  function showReviewDone() {
+    sfx.done();
+    const streak = bumpStreak();
+    const d = deckStatus(loadSave());
+    app.innerHTML = `
+      <div class="big-emoji">🧠</div>
+      <h2 class="center">Review done!</h2>
+      <div class="stats">
+        <div class="stat"><b>${run.right}/${run.asked}</b><small>remembered</small></div>
+        <div class="stat"><b>${d.total}</b><small>left in your deck</small></div>
+      </div>
+      ${streakLine(streak)}
+      <p class="center">The ones you got right will come back less often. The ones you missed come back tomorrow.</p>
+      <button class="btn">Back to lessons</button>`;
+    app.querySelector('.btn').addEventListener('click', showHome);
+    window.scrollTo(0, 0);
+  }
+
   function showDone() {
+    if (run.review) return showReviewDone();
     const L = run.L;
     sfx.done();
+    const streak = bumpStreak();
     const save = loadSave();
     const prev = save.lessons[L.id];
     const rec = { right: run.right, asked: run.asked, game: run.game, when: Date.now() };
@@ -421,6 +612,8 @@
         <div class="stat"><b>${run.right}/${run.asked}</b><small>right first try</small></div>
         <div class="stat"><b>${run.game}</b><small>game points</small></div>
       </div>
+      ${streakLine(streak)}
+      ${reviewLine()}
       <p class="kicker">Your memory tricks</p>
       <div class="trick">${L.recap}</div>
       <p class="kicker" style="margin-top:20px">Phrases you learned</p>
