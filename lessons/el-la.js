@@ -85,132 +85,403 @@ window.LESSONS.push({
       trick: 'It works with ser and estar too: <b>La caja es pesada. Los clientes están contentos.</b>',
     },
 
-    // ---------- practice ----------
+    // ---------- practice: three versions of the same rules ----------
     {
-      type: 'choice',
-      prompt: '___ caja', en: 'the box',
-      options: [
-        { text: 'la', correct: true },
-        { text: 'el', why: '<b>Caja</b> ends in -a, so it\'s a girl word: <b>la caja</b>.' },
-        { text: 'las', why: '<b>Las</b> is for more than one. One box: <b>la caja</b>.' },
+      type: 'practice',
+      sets: [
+        // ---------- Set A ----------
+        [
+          {
+            type: 'choice',
+            prompt: '___ caja', en: 'the box',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: '<b>Caja</b> ends in -a, so it\'s a girl word: <b>la caja</b>.' },
+              { text: 'las', why: '<b>Las</b> is for more than one. One box: <b>la caja</b>.' },
+            ],
+            explain: '-a ending → girl word → <b>la</b>.',
+            rule: '-a = girl word',
+          },
+          {
+            type: 'choice',
+            prompt: '___ problema', en: 'the problem',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: 'Sneaky! <b>Problema</b> ends in -a but it\'s a boy word: <b>el problema</b>. Remember: "El día del problema…"' },
+            ],
+            explain: 'A rebel: <b>el problema</b>. Most -ma words are boy words.',
+            rule: 'Rebel: -ma',
+          },
+          {
+            type: 'choice',
+            prompt: 'Necesito ___ llave.', en: 'I need a key.',
+            options: [
+              { text: 'una', correct: true },
+              { text: 'un', why: '<b>Llave</b> is a girl word (la llave), so "a key" is <b>una llave</b>.' },
+              { text: 'la', why: '<b>La llave</b> means "the key." For "a key," use <b>una</b>.' },
+            ],
+            explain: 'A / an for a girl word: <b>una</b>.',
+            rule: 'un · una',
+          },
+          {
+            type: 'choice',
+            prompt: '___ canción', en: 'the song',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: 'Words ending in <b>-ción</b> are always girl words: <b>la canción</b>.' },
+            ],
+            explain: '<b>-ción</b> is always a girl word.',
+            rule: '-ción = girl word',
+          },
+          {
+            type: 'choice', kicker: 'Make it match',
+            prompt: 'La casa es ___.', en: 'The house is white.',
+            options: [
+              { text: 'blanca', correct: true },
+              { text: 'blanco', why: '<b>Casa</b> is a girl word, so the describing word ends in -a too: <b>blanca</b>.' },
+              { text: 'blancas', why: '<b>Blancas</b> is for more than one. One house: <b>blanca</b>.' },
+            ],
+            explain: 'Girl word + one thing → <b>-a</b>: la casa blanca.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'build',
+            en: 'the red boxes',
+            answer: ['las', 'cajas', 'rojas'],
+            extra: ['los', 'rojos'],
+            wrongWhy: {
+              los: '<b>Cajas</b> are girl words, so "the" is <b>las</b>.',
+              rojos: '<b>Rojos</b> is the boy form. Boxes are girl words: <b>rojas</b>.',
+            },
+            explain: 'Everything matches: <b>las</b> cajas roj<b>as</b>.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'choice', kicker: 'On the job',
+            prompt: 'Los clientes están ___.', en: 'The customers are happy.',
+            options: [
+              { text: 'contentos', correct: true },
+              { text: 'contentas', why: 'Only if every customer is a woman. A mixed group uses the boy form: <b>contentos</b>.' },
+              { text: 'contento', why: '<b>Contento</b> is for one person. Customers is more than one: <b>contentos</b>.' },
+            ],
+            explain: 'Mixed or unknown group → boy form, plural: <b>contentos</b>.',
+            rule: 'Mixed group = boy form',
+          },
+          {
+            type: 'choice', listen: true,
+            say: 'Las cajas son muy pesadas.',
+            options: [
+              { text: 'The boxes are very heavy.', correct: true },
+              { text: 'The box is very heavy.', why: 'Listen for the <b>s</b>: <b>las cajas son</b> is more than one box.' },
+              { text: 'The houses are very heavy.', why: 'Houses would be <b>casas</b>. Listen again: <b>cajas</b>, boxes.' },
+            ],
+            explain: '<b>Las cajas pesadas</b>: every word ends in -as because boxes are girl words and more than one.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'choice',
+            prompt: '___ día', en: 'the day',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: 'A rebel! <b>Día</b> ends in -a but it\'s a boy word. That\'s why it\'s <b>buenos días</b>, not buenas días.' },
+            ],
+            explain: '<b>El día</b>. That\'s why we say <b>buenos días</b>.',
+            rule: 'Rebel',
+          },
+          {
+            type: 'choice',
+            prompt: '___ mano', en: 'the hand',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: 'A rebel! <b>Mano</b> ends in -o but it\'s a girl word: <b>la mano</b>.' },
+            ],
+            explain: '<b>La mano</b>: "…el mapa en la mano."',
+            rule: 'Rebel',
+          },
+          {
+            type: 'build',
+            en: 'a big truck',
+            answer: ['un', 'camión', 'grande'],
+            extra: ['una'],
+            wrongWhy: { una: '<b>Camión</b> is a boy word (el camión), so "a" is <b>un</b>.' },
+            explain: '<b>Grande</b> ends in -e, so it stays the same for boy and girl words.',
+            rule: 'un · una',
+          },
+          {
+            type: 'choice', kicker: 'On the job',
+            prompt: 'El garaje está muy ___.', en: 'The garage is very dirty.',
+            options: [
+              { text: 'sucio', correct: true },
+              { text: 'sucia', why: '<b>Garaje</b> is a boy word (all -aje words are), so: <b>sucio</b>.' },
+            ],
+            explain: '-aje words are boy words: el garaje sucio.',
+            rule: '-aje = boy word',
+          },
+        ],
+
+        // ---------- Set B ----------
+        [
+          {
+            type: 'choice',
+            prompt: '___ libro', en: 'the book',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: '<b>Libro</b> ends in -o, so it\'s a boy word: <b>el libro</b>.' },
+              { text: 'los', why: '<b>Los</b> is for more than one. One book: <b>el libro</b>.' },
+            ],
+            explain: '-o ending → boy word → <b>el</b>.',
+            rule: '-o = boy word',
+          },
+          {
+            type: 'choice',
+            prompt: '___ sistema', en: 'the system',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: 'Sneaky! Most <b>-ma</b> words, like sistema and problema, are boy words: <b>el sistema</b>.' },
+            ],
+            explain: 'A rebel: <b>el sistema</b>, just like el problema.',
+            rule: 'Rebel: -ma',
+          },
+          {
+            type: 'choice',
+            prompt: 'Tengo ___ problema.', en: 'I have a problem.',
+            options: [
+              { text: 'un', correct: true },
+              { text: 'una', why: '<b>Problema</b> is a rebel boy word (el problema), so "a" is <b>un problema</b>.' },
+              { text: 'el', why: '<b>El problema</b> = the problem. For "a": <b>un</b>.' },
+            ],
+            explain: 'A / an for a boy word: <b>un</b>.',
+            rule: 'un · una',
+          },
+          {
+            type: 'choice',
+            prompt: '___ ciudad', en: 'the city',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: 'Words ending in <b>-dad</b> are always girl words: <b>la ciudad</b>.' },
+            ],
+            explain: '<b>-dad</b> is always a girl word.',
+            rule: '-dad = girl word',
+          },
+          {
+            type: 'choice', kicker: 'Make it match',
+            prompt: 'El camión es ___.', en: 'The truck is white.',
+            options: [
+              { text: 'blanco', correct: true },
+              { text: 'blanca', why: '<b>Camión</b> is a boy word, so the describing word ends in -o: <b>blanco</b>.' },
+              { text: 'blancos', why: '<b>Blancos</b> is for more than one. One truck: <b>blanco</b>.' },
+            ],
+            explain: 'Boy word + one thing → <b>-o</b>: el camión blanco.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'build',
+            en: 'the old chairs',
+            answer: ['las', 'sillas', 'viejas'],
+            extra: ['los', 'viejos'],
+            wrongWhy: {
+              los: '<b>Sillas</b> are girl words, so "the" is <b>las</b>.',
+              viejos: '<b>Viejos</b> is the boy form. Chairs are girl words: <b>viejas</b>.',
+            },
+            explain: 'Everything matches: <b>las</b> sill<b>as</b> viej<b>as</b>.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'choice', kicker: 'On the job',
+            prompt: 'Mis compañeros están ___.', en: 'My coworkers are tired.',
+            options: [
+              { text: 'cansados', correct: true },
+              { text: 'cansadas', why: 'A group of guys, or a mixed group, uses the boy form: <b>cansados</b>.' },
+              { text: 'cansado', why: '<b>Cansado</b> is for one person. Coworkers is more than one: <b>cansados</b>.' },
+            ],
+            explain: 'Mixed or unknown group → boy form, plural: <b>cansados</b>.',
+            rule: 'Mixed group = boy form',
+          },
+          {
+            type: 'choice', listen: true,
+            say: 'Los colchones son muy viejos.',
+            options: [
+              { text: 'The mattresses are very old.', correct: true },
+              { text: 'The mattress is very old.', why: 'Listen for the <b>s</b>: <b>los colchones son</b> is more than one.' },
+              { text: 'The boxes are very old.', why: 'Boxes would be <b>cajas</b>. Listen again: <b>colchones</b>, mattresses.' },
+            ],
+            explain: '<b>Los colchones viejos</b>: boy words, more than one, so every word ends in -os or -es.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'choice',
+            prompt: '___ mapa', en: 'the map',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: 'A rebel! <b>Mapa</b> ends in -a but it\'s a boy word: "…<b>el mapa</b> en la mano."' },
+            ],
+            explain: '<b>El mapa</b>: one of the rebels.',
+            rule: 'Rebel',
+          },
+          {
+            type: 'choice',
+            prompt: '___ foto', en: 'the photo',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: 'A rebel! <b>Foto</b> is short for <b>la fotografía</b>, so it stays a girl word: <b>la foto</b>.' },
+            ],
+            explain: '<b>La foto</b>: short for la fotografía.',
+            rule: 'Rebel',
+          },
+          {
+            type: 'build',
+            en: 'a red car',
+            answer: ['un', 'carro', 'rojo'],
+            extra: ['una', 'roja'],
+            wrongWhy: {
+              una: '<b>Carro</b> is a boy word, so "a" is <b>un</b>.',
+              roja: '<b>Carro</b> is a boy word, so: <b>rojo</b>.',
+            },
+            explain: 'Boy word all the way: <b>un</b> carr<b>o</b> roj<b>o</b>.',
+            rule: 'un · una',
+          },
+          {
+            type: 'choice', kicker: 'On the job',
+            prompt: 'El viaje es muy ___.', en: 'The trip is very long.',
+            options: [
+              { text: 'largo', correct: true },
+              { text: 'larga', why: '<b>-aje</b> words are boy words (el viaje), so: <b>largo</b>.' },
+            ],
+            explain: '-aje words are boy words: el viaje largo.',
+            rule: '-aje = boy word',
+          },
+        ],
+
+        // ---------- Set C ----------
+        [
+          {
+            type: 'choice',
+            prompt: '___ mesa', en: 'the table',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: '<b>Mesa</b> ends in -a, so it\'s a girl word: <b>la mesa</b>.' },
+              { text: 'las', why: '<b>Las</b> is for more than one. One table: <b>la mesa</b>.' },
+            ],
+            explain: '-a ending → girl word → <b>la</b>.',
+            rule: '-a = girl word',
+          },
+          {
+            type: 'choice',
+            prompt: '___ idioma', en: 'the language',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: 'Another <b>-ma</b> rebel: <b>el idioma</b>, like el problema.' },
+            ],
+            explain: 'A rebel: <b>el idioma</b>.',
+            rule: 'Rebel: -ma',
+          },
+          {
+            type: 'choice',
+            prompt: 'Busco ___ silla.', en: "I'm looking for a chair.",
+            options: [
+              { text: 'una', correct: true },
+              { text: 'un', why: '<b>Silla</b> is a girl word (la silla), so "a" is <b>una</b>.' },
+              { text: 'la', why: '<b>La silla</b> = the chair. For "a chair": <b>una</b>.' },
+            ],
+            explain: 'A / an for a girl word: <b>una</b>.',
+            rule: 'un · una',
+          },
+          {
+            type: 'choice',
+            prompt: '___ televisión', en: 'the TV',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: 'Words ending in <b>-sión</b> (and -ción) are always girl words: <b>la televisión</b>.' },
+            ],
+            explain: '<b>-sión</b> and <b>-ción</b> are always girl words.',
+            rule: '-ción = girl word',
+          },
+          {
+            type: 'choice', kicker: 'Make it match',
+            prompt: 'Las cajas están ___.', en: 'The boxes are full.',
+            options: [
+              { text: 'llenas', correct: true },
+              { text: 'llenos', why: '<b>Cajas</b> are girl words: <b>llenas</b>.' },
+              { text: 'llena', why: '<b>Llena</b> is for one thing. Boxes is more than one: <b>llenas</b>.' },
+            ],
+            explain: 'Girl words, more than one → <b>-as</b>.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'build',
+            en: 'the dirty trucks',
+            answer: ['los', 'camiones', 'sucios'],
+            extra: ['las', 'sucias'],
+            wrongWhy: {
+              las: '<b>Camiones</b> are boy words, so "the" is <b>los</b>.',
+              sucias: '<b>Sucias</b> is the girl form. Trucks are boy words: <b>sucios</b>.',
+            },
+            explain: 'Everything matches: <b>los</b> camiones suci<b>os</b>.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'choice', kicker: 'On the job',
+            prompt: 'Los clientes son muy ___.', en: 'The customers are very nice.',
+            options: [
+              { text: 'simpáticos', correct: true },
+              { text: 'simpáticas', why: 'Only if every customer is a woman. A mixed group uses the boy form: <b>simpáticos</b>.' },
+              { text: 'simpático', why: '<b>Simpático</b> is for one person. Customers: <b>simpáticos</b>.' },
+            ],
+            explain: 'Mixed or unknown group → boy form, plural.',
+            rule: 'Mixed group = boy form',
+          },
+          {
+            type: 'choice', listen: true,
+            say: 'La puerta está abierta.',
+            options: [
+              { text: 'The door is open.', correct: true },
+              { text: 'The doors are open.', why: 'Listen: <b>la puerta está</b> is just one door.' },
+              { text: 'The door is closed.', why: 'Closed would be <b>cerrada</b>. <b>Abierta</b> = open.' },
+            ],
+            explain: '<b>La puerta abierta</b>: girl word, so <b>-a</b>.',
+            rule: 'Agreement',
+          },
+          {
+            type: 'choice',
+            prompt: '___ planeta', en: 'the planet',
+            options: [
+              { text: 'el', correct: true },
+              { text: 'la', why: 'A rebel! <b>Planeta</b> ends in -a but it\'s a boy word: <b>el planeta</b>.' },
+            ],
+            explain: '<b>El planeta</b>: another -a rebel, like el día and el mapa.',
+            rule: 'Rebel',
+          },
+          {
+            type: 'choice',
+            prompt: '___ moto', en: 'the motorcycle',
+            options: [
+              { text: 'la', correct: true },
+              { text: 'el', why: 'A rebel! <b>Moto</b> is short for <b>la motocicleta</b>, so it\'s a girl word.' },
+            ],
+            explain: '<b>La moto</b>: short for la motocicleta, like la foto.',
+            rule: 'Rebel',
+          },
+          {
+            type: 'build',
+            en: 'a big house',
+            answer: ['una', 'casa', 'grande'],
+            extra: ['un'],
+            wrongWhy: { un: '<b>Casa</b> is a girl word: <b>una casa</b>. Grande ends in -e, so it doesn\'t change.' },
+            explain: '<b>Grande</b> stays the same for boy and girl words.',
+            rule: 'un · una',
+          },
+          {
+            type: 'choice', kicker: 'On the job',
+            prompt: 'El garaje está ___.', en: 'The garage is empty.',
+            options: [
+              { text: 'vacío', correct: true },
+              { text: 'vacía', why: '<b>-aje</b> words are boy words: <b>el garaje vacío</b>.' },
+            ],
+            explain: '-aje words are boy words.',
+            rule: '-aje = boy word',
+          },
+        ],
       ],
-      explain: '-a ending → girl word → <b>la</b>.',
-      rule: '-a = girl word',
-    },
-    {
-      type: 'choice',
-      prompt: '___ problema', en: 'the problem',
-      options: [
-        { text: 'el', correct: true },
-        { text: 'la', why: 'Sneaky! <b>Problema</b> ends in -a but it\'s a boy word: <b>el problema</b>. Remember: "El día del problema…"' },
-      ],
-      explain: 'A rebel: <b>el problema</b>. Most -ma words are boy words.',
-      rule: 'Rebel: -ma',
-    },
-    {
-      type: 'choice',
-      prompt: 'Necesito ___ llave.', en: 'I need a key.',
-      options: [
-        { text: 'una', correct: true },
-        { text: 'un', why: '<b>Llave</b> is a girl word (la llave), so "a key" is <b>una llave</b>.' },
-        { text: 'la', why: '<b>La llave</b> means "the key." For "a key," use <b>una</b>.' },
-      ],
-      explain: 'A / an for a girl word: <b>una</b>.',
-      rule: 'un · una',
-    },
-    {
-      type: 'choice',
-      prompt: '___ canción', en: 'the song',
-      options: [
-        { text: 'la', correct: true },
-        { text: 'el', why: 'Words ending in <b>-ción</b> are always girl words: <b>la canción</b>.' },
-      ],
-      explain: '<b>-ción</b> is always a girl word.',
-      rule: '-ción = girl word',
-    },
-    {
-      type: 'choice', kicker: 'Make it match',
-      prompt: 'La casa es ___.', en: 'The house is white.',
-      options: [
-        { text: 'blanca', correct: true },
-        { text: 'blanco', why: '<b>Casa</b> is a girl word, so the describing word ends in -a too: <b>blanca</b>.' },
-        { text: 'blancas', why: '<b>Blancas</b> is for more than one. One house: <b>blanca</b>.' },
-      ],
-      explain: 'Girl word + one thing → <b>-a</b>: la casa blanca.',
-      rule: 'Agreement',
-    },
-    {
-      type: 'build',
-      en: 'the red boxes',
-      answer: ['las', 'cajas', 'rojas'],
-      extra: ['los', 'rojos'],
-      wrongWhy: {
-        los: '<b>Cajas</b> are girl words, so "the" is <b>las</b>.',
-        rojos: '<b>Rojos</b> is the boy form. Boxes are girl words: <b>rojas</b>.',
-      },
-      explain: 'Everything matches: <b>las</b> cajas roj<b>as</b>.',
-      rule: 'Agreement',
-    },
-    {
-      type: 'choice', kicker: 'On the job',
-      prompt: 'Los clientes están ___.', en: 'The customers are happy.',
-      options: [
-        { text: 'contentos', correct: true },
-        { text: 'contentas', why: 'Only if every customer is a woman. A mixed group uses the boy form: <b>contentos</b>.' },
-        { text: 'contento', why: '<b>Contento</b> is for one person. Customers is more than one: <b>contentos</b>.' },
-      ],
-      explain: 'Mixed or unknown group → boy form, plural: <b>contentos</b>.',
-      rule: 'Mixed group = boy form',
-    },
-    {
-      type: 'choice', listen: true,
-      say: 'Las cajas son muy pesadas.',
-      options: [
-        { text: 'The boxes are very heavy.', correct: true },
-        { text: 'The box is very heavy.', why: 'Listen for the <b>s</b>: <b>las cajas son</b> is more than one box.' },
-        { text: 'The houses are very heavy.', why: 'Houses would be <b>casas</b>. Listen again: <b>cajas</b>, boxes.' },
-      ],
-      explain: '<b>Las cajas pesadas</b>: every word ends in -as because boxes are girl words and more than one.',
-      rule: 'Agreement',
-    },
-    {
-      type: 'choice',
-      prompt: '___ día', en: 'the day',
-      options: [
-        { text: 'el', correct: true },
-        { text: 'la', why: 'A rebel! <b>Día</b> ends in -a but it\'s a boy word. That\'s why it\'s <b>buenos días</b>, not buenas días.' },
-      ],
-      explain: '<b>El día</b>. That\'s why we say <b>buenos días</b>.',
-      rule: 'Rebel',
-    },
-    {
-      type: 'choice',
-      prompt: '___ mano', en: 'the hand',
-      options: [
-        { text: 'la', correct: true },
-        { text: 'el', why: 'A rebel! <b>Mano</b> ends in -o but it\'s a girl word: <b>la mano</b>.' },
-      ],
-      explain: '<b>La mano</b>: "…el mapa en la mano."',
-      rule: 'Rebel',
-    },
-    {
-      type: 'build',
-      en: 'a big truck',
-      answer: ['un', 'camión', 'grande'],
-      extra: ['una'],
-      wrongWhy: { una: '<b>Camión</b> is a boy word (el camión), so "a" is <b>un</b>.' },
-      explain: '<b>Grande</b> ends in -e, so it stays the same for boy and girl words.',
-      rule: 'un · una',
-    },
-    {
-      type: 'choice', kicker: 'On the job',
-      prompt: 'El garaje está muy ___.', en: 'The garage is very dirty.',
-      options: [
-        { text: 'sucio', correct: true },
-        { text: 'sucia', why: '<b>Garaje</b> is a boy word (all -aje words are), so: <b>sucio</b>.' },
-      ],
-      explain: '-aje words are boy words: el garaje sucio.',
-      rule: '-aje = boy word',
     },
 
     { type: 'retry' },

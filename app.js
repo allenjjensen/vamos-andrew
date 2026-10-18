@@ -267,6 +267,10 @@
   function lessonQuestions(L) {
     return L.steps.flatMap(s => s.type === 'practice' ? [].concat(...s.sets) : [s]);
   }
+  // Every conversation a lesson has, from all its versions.
+  function talkScenes(L) {
+    return L.steps.flatMap(s => s.type === 'talkSet' ? s.scenes : s.type === 'talk' ? [s] : []);
+  }
   // A teaching card with this version's example sentences (tags stay the same).
   function withRows(s, version) {
     if (!s.moreRows) return s;
@@ -315,6 +319,7 @@
         continue;
       }
       if (s.type === 'practice') steps.push(...(version < 0 ? mixedPractice(L, s, save) : s.sets[version % s.sets.length]));
+      else if (s.type === 'talkSet') steps.push(version < 0 ? pick(s.scenes) : s.scenes[version % s.scenes.length]);
       else steps.push(s);
     }
     run = {
@@ -399,7 +404,7 @@
     }
     if (kind === 't') {
       // A conversation reply he got wrong comes back as "what do you say back?"
-      for (const talk of L.steps.filter(x => x.type === 'talk')) {
+      for (const talk of talkScenes(L)) {
         const line = talk.lines.find(x => x.them === key);
         if (!line) continue;
         const good = line.choices.find(c => c.good);
@@ -605,7 +610,7 @@
         checked = true;
         const got = picked.map(t => t.w);
         const ok = got.join(' ') === s.answer.join(' ');
-        const sentence = s.answer.join(' ') + (s.end || '.');
+        const sentence = s.answer.join(' ') + (s.end ?? '.');
         let why = s.explain;
         if (!ok) {
           const trap = got.find(w => s.wrongWhy && s.wrongWhy[w]);
