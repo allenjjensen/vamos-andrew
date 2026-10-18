@@ -9,13 +9,13 @@
   // Shown at the end of the lesson list, so it's clear more are being made (not locked).
   const COMING_NEXT = ['Going to & will: talking about tomorrow', 'Describing things: big, old, broken', 'Used to: when I was a kid'];
   const UNIT_ICON = { 'The basics': '🧱', 'Booking jobs': '📞' };
-  // Books is still being built: it only shows after opening the app once with ?books (and ?books=off hides it again).
+  // Books is shown to everyone while Andrew tests it. Opening the app once with ?books=off hides it (?books brings it back).
   const BOOKS_ON = (() => {
     try {
       const q = new URLSearchParams(location.search).get('books');
       if (q !== null) localStorage.setItem('vamos-books-on', q === 'off' ? '0' : '1');
-      return localStorage.getItem('vamos-books-on') === '1';
-    } catch (e) { return false; }
+      return localStorage.getItem('vamos-books-on') !== '0';
+    } catch (e) { return true; }
   })();
   const PRAISE = ['¡Correcto!', '¡Muy bien!', '¡Excelente!', '¡Eso es!', '¡Perfecto!'];
 
@@ -190,7 +190,7 @@
       <div class="tools">
         <button class="tool rules-btn"><span>📖</span><b>Rules</b><small>Look anything up</small></button>
         <button class="tool gym-btn"><span>🏋️</span><b>Practice gym</b><small>Verbs, numbers, time, colors & more</small></button>
-        ${BOOKS_ON ? '<button class="tool wide books-btn"><span>📚</span><span class="tool-text"><b>Books</b><small>Hear an audiobook in English, then in Spanish</small></span></button>' : ''}
+        ${BOOKS_ON ? '<button class="tool wide books-btn"><span>📚</span><span class="tool-text"><b>Books <span class="new-tag">TESTING</span></b><small>Hear an audiobook in English, then in Spanish. Brand new: tell your brother what works and what needs fixing!</small></span></button>' : ''}
       </div>
       <section class="lessons"></section>
       <div class="home-links">

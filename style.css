@@ -435,6 +435,7 @@ p.version-tag { margin: -4px 0 10px; }
 /* ---------- books ---------- */
 .tool.wide { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 12px; }
 .tool .tool-text { display: flex; flex-direction: column; gap: 2px; font-size: 1rem; }
+.tool .new-tag { font-size: .65rem; vertical-align: middle; }
 .bk-picks { display: grid; gap: 10px; margin: 18px 0 12px; }
 .bk-pick {
   display: flex;
