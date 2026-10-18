@@ -198,11 +198,13 @@
     LESSONS.forEach((L, i) => {
       const rec = save.lessons[L.id];
       const isNew = !rec && !(save.opened || []).includes(L.id);
+      const label = rec ? versionLabel(L, runsOf(save, L)) : '';
       const card = document.createElement('button');
       card.className = 'lesson' + (rec ? ' done' : '');
       card.innerHTML = `<span class="num">${rec ? '✓' : i + 1}</span>
         <span class="info"><b>${L.title}${isNew ? ' <span class="new-tag">NEW</span>' : ''}</b><small>${L.subtitle} · ${L.minutes} min</small>
-        ${rec ? `<small class="best">Best: ${rec.right}/${rec.asked} first try${hasGame(L) ? ` · game ${rec.game} pts` : ''}</small>` : ''}</span>`;
+        ${rec ? `<small class="best">Best: ${rec.right}/${rec.asked} first try${hasGame(L) ? ` · game ${rec.game} pts` : ''}</small>` : ''}
+        ${label ? `<small class="version-tag">Next: ${label}</small>` : ''}</span>`;
       card.addEventListener('click', () => startLesson(L));
       list.appendChild(card);
     });
@@ -244,10 +246,94 @@
   // ---------- running a lesson ----------
   let run = null;
 
+  // ---------- lesson versions ----------
+  // A lesson's practice can come in sets (A, B, C). Run 1 uses A, run 2 B, run 3 C,
+  // and every run after that mixes all of them, so he has to use the rule, not memory.
+  // Replays skip the warm-up and the teaching cards (a refresher card can bring them back).
+  function runsOf(save, L) {
+    const rec = save.lessons[L.id];
+    return rec ? (rec.runs || 1) : 0;
+  }
+  function setCount(L) {
+    const p = L.steps.find(s => s.type === 'practice');
+    return p ? p.sets.length : 0;
+  }
+  function versionLabel(L, runs) {
+    const n = setCount(L);
+    if (n < 2) return '';
+    return runs < n ? `Version ${runs + 1} of ${n}` : '🔀 Mixed every time';
+  }
+  // Every question a lesson can ask, from all its sets (for the review deck to find them).
+  function lessonQuestions(L) {
+    return L.steps.flatMap(s => s.type === 'practice' ? [].concat(...s.sets) : [s]);
+  }
+  // A teaching card with this version's example sentences (tags stay the same).
+  function withRows(s, version) {
+    if (!s.moreRows) return s;
+    const v = version < 0 ? Math.floor(Math.random() * (s.moreRows.length + 1)) : version % (s.moreRows.length + 1);
+    if (v === 0) return s;
+    return Object.assign({}, s, { rows: s.moreRows[v - 1].map((r, i) => Object.assign({ tag: s.rows[i].tag }, r)) });
+  }
+
+  function mixedPractice(L, p, save) {
+    const all = [].concat(...p.sets);
+    const kindOf = q => q.type === 'build' ? 'build' : q.listen ? 'listen' : 'choice';
+    // Same size and same mix of question kinds as set A.
+    const want = {};
+    p.sets[0].forEach(q => { want[kindOf(q)] = (want[kindOf(q)] || 0) + 1; });
+    // Up to 3 he got wrong before come first.
+    const missed = (save.misses && save.misses[L.id]) || [];
+    const chosen = shuffle(all.filter(q => missed.includes(questionId(L.id, q)))).slice(0, 3);
+    chosen.forEach(q => { want[kindOf(q)]--; });
+    // Then take turns between rules (Origin, Location…) so every part of the lesson shows up.
+    Object.keys(want).forEach(kind => {
+      const byRule = {};
+      shuffle(all.filter(q => kindOf(q) === kind && !chosen.includes(q))).forEach(q => {
+        (byRule[q.rule] = byRule[q.rule] || []).push(q);
+      });
+      const rules = shuffle(Object.keys(byRule));
+      while (want[kind] > 0 && rules.some(r => byRule[r].length)) {
+        for (const r of rules) {
+          if (want[kind] > 0 && byRule[r].length) { chosen.push(byRule[r].pop()); want[kind]--; }
+        }
+      }
+    });
+    return shuffle(chosen);
+  }
+
   function startLesson(L) {
     markOpened(L.id);
-    run = { L, steps: L.steps.slice(), i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0, toReview: new Set() };
+    const save = loadSave();
+    const runs = runsOf(save, L);
+    const n = setCount(L);
+    const version = n && runs >= n ? -1 : runs; // -1 = mixed
+    const steps = [];
+    for (const s of L.steps) {
+      if (runs && (s.warmup || s.type === 'warmupResult')) continue;
+      if (runs && s.type === 'teach') {
+        if (!steps.some(x => x.type === 'refresher')) steps.push({ type: 'refresher' });
+        continue;
+      }
+      if (s.type === 'practice') steps.push(...(version < 0 ? mixedPractice(L, s, save) : s.sets[version % s.sets.length]));
+      else steps.push(s);
+    }
+    run = {
+      L, steps, i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0, toReview: new Set(),
+      version, label: versionLabel(L, runs),
+    };
     showStep();
+  }
+
+  // Which questions he got wrong in a lesson, so mixed runs can bring them back.
+  function noteMiss(lessonId, id, ok) {
+    const save = loadSave();
+    save.misses = save.misses || {};
+    const list = save.misses[lessonId] || [];
+    const at = list.indexOf(id);
+    if (ok && at >= 0) list.splice(at, 1);
+    if (!ok && at < 0) list.push(id);
+    save.misses[lessonId] = list.slice(-30);
+    writeSave(save);
   }
 
   function next() { run.i++; showStep(); }
@@ -291,8 +377,10 @@
     run.asked++;
     if (ok) run.right++;
     else run.retry.push(s);
-    if (s.reviewId) ok ? deckHit(s.reviewId) : deckMiss(s.reviewId);
-    else if (!ok) { const id = questionId(run.L.id, s); deckMiss(id); run.toReview.add(id); }
+    if (s.reviewId) { ok ? deckHit(s.reviewId) : deckMiss(s.reviewId); return; }
+    const id = questionId(run.L.id, s);
+    noteMiss(run.L.id, id, ok);
+    if (!ok) { deckMiss(id); run.toReview.add(id); }
   }
 
   // ---------- review session ----------
@@ -306,7 +394,7 @@
     const L = LESSONS.find(x => x.id === lessonId);
     if (!L) return null;
     if (kind === 'q') {
-      const s = L.steps.find(x => (x.prompt || x.en || x.say) === key);
+      const s = lessonQuestions(L).find(x => (x.prompt || x.en || x.say) === key);
       return s ? Object.assign({}, s, { reviewId: id, isReview: true, warmup: false }) : null;
     }
     if (kind === 't') {
@@ -404,9 +492,29 @@
         <div class="big-emoji">${s.emoji || '📘'}</div>
         <p class="kicker center">Lesson · about ${run.L.minutes} minutes</p>
         <h2 class="center">${s.title}</h2>
+        ${run.label ? `<p class="center version-tag">${run.label}</p>` : ''}
         <p>In this lesson you'll learn:</p>
-        <ul class="learn-list">${s.learn.map(x => `<li>${x}</li>`).join('')}</ul>`;
+        <ul class="learn-list">${s.learn.map(x => `<li>${x}</li>`).join('')}</ul>
+        ${run.version !== 0 && run.label ? `<p class="small center">${run.version < 0
+          ? 'Questions from all versions, mixed up. Use the rule, not your memory!'
+          : 'Same rules, all new sentences.'}</p>` : ''}`;
       continueButton(foot, "Let's go");
+    },
+
+    // On replays, this stands in for the teaching cards.
+    refresher(s, stage, foot) {
+      stage.innerHTML = `
+        <div class="big-emoji">🧠</div>
+        <p class="kicker center">Quick refresher</p>
+        <h2 class="center">Remember the rules?</h2>
+        <div class="trick">${run.L.recap}</div>`;
+      foot.innerHTML = '<button class="btn ghost">📖 Show me the lesson again</button><button class="btn">Got it, start</button>';
+      foot.querySelector('.ghost').addEventListener('click', () => {
+        const cards = run.L.steps.filter(x => x.type === 'teach').map(x => withRows(x, run.version));
+        run.steps.splice(run.i + 1, 0, ...cards);
+        next();
+      });
+      foot.querySelector('.btn:not(.ghost)').addEventListener('click', next);
     },
 
     note(s, stage, foot) {
@@ -1062,7 +1170,7 @@
     const streak = bumpStreak();
     const save = loadSave();
     const prev = save.lessons[L.id];
-    const rec = { right: run.right, asked: run.asked, game: run.game, when: Date.now() };
+    const rec = { right: run.right, asked: run.asked, game: run.game, when: Date.now(), runs: runsOf(save, L) + 1 };
     if (prev) {
       rec.game = Math.max(rec.game, prev.game);
       if (prev.right / prev.asked > rec.right / rec.asked) { rec.right = prev.right; rec.asked = prev.asked; }
@@ -1074,6 +1182,7 @@
       <div class="big-emoji">🎉</div>
       <h2 class="center">¡Bien hecho, ${NAME}!</h2>
       <p class="center">Lesson complete.</p>
+      ${versionLabel(L, rec.runs) ? `<p class="center version-tag">Next time: ${versionLabel(L, rec.runs)}</p>` : ''}
       <div class="stats">
         <div class="stat"><b>${run.right}/${run.asked}</b><small>right first try</small></div>
         ${run.bonus ? `<div class="stat"><b>${run.bonus.value}</b><small>${run.bonus.label}</small></div>`

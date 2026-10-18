@@ -416,6 +416,10 @@ details[open] summary::after { content: '▾'; }
   border: 2px solid var(--line); border-radius: 14px; padding: 10px; resize: vertical; word-break: break-all;
 }
 
+/* ---------- lesson versions ---------- */
+.version-tag, .lesson .version-tag { color: var(--teal); font-weight: 800; }
+p.version-tag { margin: -4px 0 10px; }
+
 /* ---------- done ---------- */
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0; }
 .stat { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 12px; text-align: center; }

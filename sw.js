@@ -1,7 +1,7 @@
 // Offline support for the installed app.
 // App files: try the network first (so updates show up), fall back to the saved copy when offline.
 // Fonts: use the saved copy first, they never change.
-const CACHE = 'vamos-v1';
+const CACHE = 'vamos-v2';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'conjugation.js', 'words.js', 'manifest.webmanifest',
   'lessons/ser-estar.js', 'lessons/job-1.js', 'lessons/el-la.js', 'lessons/past-1.js',
