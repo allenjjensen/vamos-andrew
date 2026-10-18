@@ -7,6 +7,7 @@ window.LESSONS.push({
   title: 'On the job: first customer',
   subtitle: 'Talk a customer through a pickup',
   minutes: 10,
+  terms: ['verb', 'pronoun'],
 
   recap: `<p>With customers, use <b>usted</b>: <b>quiere, tiene, está</b> (not quieres, tienes, estás).</p>
     <p>Where things are: <b>¿Dónde está? / ¿Dónde están?</b></p>

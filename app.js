@@ -7,7 +7,16 @@
   const app = document.getElementById('app');
   const LESSONS = window.LESSONS || [];
   // Shown at the end of the lesson list, so it's clear more are being made (not locked).
-  const COMING_NEXT = ['On the job: the phone call', 'Going to & will: talking about tomorrow', 'Used to: when I was a kid'];
+  const COMING_NEXT = ['Going to & will: talking about tomorrow', 'Describing things: big, old, broken', 'Used to: when I was a kid'];
+  const UNIT_ICON = { 'The basics': '🧱', 'Booking jobs': '📞' };
+  // Books is still being built: it only shows after opening the app once with ?books (and ?books=off hides it again).
+  const BOOKS_ON = (() => {
+    try {
+      const q = new URLSearchParams(location.search).get('books');
+      if (q !== null) localStorage.setItem('vamos-books-on', q === 'off' ? '0' : '1');
+      return localStorage.getItem('vamos-books-on') === '1';
+    } catch (e) { return false; }
+  })();
   const PRAISE = ['¡Correcto!', '¡Muy bien!', '¡Excelente!', '¡Eso es!', '¡Perfecto!'];
 
   // ---------- saving (per browser; a blocked or private browser just won't remember) ----------
@@ -169,6 +178,7 @@
   // ---------- home ----------
   function showHome() {
     if ('speechSynthesis' in window) speechSynthesis.cancel();
+    BOOKS.stop();
     const save = loadSave();
     app.innerHTML = `
       <header class="home-head">
@@ -179,7 +189,8 @@
       ${reviewCard(save)}
       <div class="tools">
         <button class="tool rules-btn"><span>📖</span><b>Rules</b><small>Look anything up</small></button>
-        <button class="tool gym-btn"><span>🏋️</span><b>Practice gym</b><small>Verbs, this & that, my & mine</small></button>
+        <button class="tool gym-btn"><span>🏋️</span><b>Practice gym</b><small>Verbs, numbers, time, colors & more</small></button>
+        ${BOOKS_ON ? '<button class="tool wide books-btn"><span>📚</span><span class="tool-text"><b>Books</b><small>Hear an audiobook in English, then in Spanish</small></span></button>' : ''}
       </div>
       <section class="lessons"></section>
       <div class="home-links">
@@ -194,8 +205,15 @@
     if (reviewBtn) reviewBtn.addEventListener('click', startReview);
     app.querySelector('.rules-btn').addEventListener('click', openRules);
     app.querySelector('.gym-btn').addEventListener('click', showGymSetup);
+    if (BOOKS_ON) app.querySelector('.books-btn').addEventListener('click', () => BOOKS.open({ app, top: gymTop, openRules, showHome }));
     const list = app.querySelector('.lessons');
+    let unit = null;
     LESSONS.forEach((L, i) => {
+      const u = L.unit || 'The basics';
+      if (u !== unit) {
+        unit = u;
+        list.insertAdjacentHTML('beforeend', `<h3 class="unit-head"><span>${UNIT_ICON[u] || '📘'}</span>${u}</h3>`);
+      }
       const rec = save.lessons[L.id];
       const isNew = !rec && !(save.opened || []).includes(L.id);
       const label = rec ? versionLabel(L, runsOf(save, L)) : '';
@@ -322,12 +340,237 @@
       else if (s.type === 'talkSet') steps.push(version < 0 ? pick(s.scenes) : s.scenes[version % s.scenes.length]);
       else steps.push(s);
     }
+    // First time through: a reminder of the word types (verb, noun…) the lesson talks about.
+    const terms = lessonTerms(L);
+    if (!runs && terms.length) steps.splice(steps.findIndex(x => x.type === 'intro') + 1, 0, { type: 'terms', ids: terms });
     run = {
       L, steps, i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0, toReview: new Set(),
       version, label: versionLabel(L, runs),
     };
     showStep();
   }
+
+  // ---------- word types: tap "verb", "noun"… anywhere for a reminder (data in terms.js) ----------
+  const TERM_WORDS = {};
+  Object.keys(TERMS).forEach(id => TERMS[id].match.forEach(m => { TERM_WORDS[m] = id; }));
+  const TERM_RE = new RegExp(`\\b(${Object.keys(TERM_WORDS).sort((a, b) => b.length - a.length).join('|')})\\b`, 'gi');
+  const NO_TERMS = 'button, select, input, textarea, h1, h2, summary, .term, .term-block, .pop, .opt, .tile, .g-sentence, .bubble, .prompt, .wt-zone, .wt-pop';
+
+  // The word types a lesson uses: the ones it lists, then any its teaching cards mention.
+  function lessonTerms(L) {
+    const ids = (L.terms || []).slice();
+    const text = L.steps.filter(s => s.type === 'teach').map(s => `${s.kicker || ''} ${s.title} ${s.body || ''} ${s.trick || ''}`).join(' ');
+    (text.replace(/<[^>]+>/g, ' ').match(TERM_RE) || []).forEach(w => {
+      const id = TERM_WORDS[w.toLowerCase()];
+      if (!ids.includes(id)) ids.push(id);
+    });
+    return ids.slice(0, 4);
+  }
+  function termHTML(id) {
+    const t = TERMS[id];
+    return `<p class="kicker">Word type</p><h3 class="term-name">${t.name}</h3><p>${t.what}</p>
+      <div class="term-ex">${t.en.map(x => `<p>“${x}”</p>`).join('')}<p class="small">${t.note}</p></div>
+      <div class="row"><div class="row-text"><b>${t.es}</b><small>${t.esEn}</small></div>${spk(t.es.replace(/<[^>]+>/g, ''))}</div>
+      ${t.test ? `<div class="trick">💡 ${t.test}</div>` : ''}`;
+  }
+  function termChip(id, label) { return `<span class="term" data-term="${id}" role="button" tabindex="0">${label || TERMS[id].name}</span>`; }
+  function closePop() { const p = document.querySelector('.pop'); if (p) p.remove(); }
+  function showTermPop(id) {
+    if (!TERMS[id]) return;
+    closePop();
+    const pop = document.createElement('div');
+    pop.className = 'pop';
+    pop.innerHTML = `<div class="pop-card term-block">${termHTML(id)}<button class="btn pop-ok">Got it</button></div>`;
+    pop.addEventListener('click', e => { if (e.target === pop || e.target.closest('.pop-ok')) closePop(); });
+    document.body.appendChild(pop);
+  }
+  // Underlines word-type words in any text that shows up, so they can be tapped.
+  function linkTerms(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      TERM_RE.lastIndex = 0;
+      if (TERM_RE.test(n.nodeValue) && n.parentElement && !n.parentElement.closest(NO_TERMS)) hits.push(n);
+    }
+    hits.forEach(n => {
+      const s = n.nodeValue, frag = document.createDocumentFragment();
+      let last = 0;
+      s.replace(TERM_RE, (m, w, at) => {
+        frag.append(s.slice(last, at));
+        const span = document.createElement('span');
+        span.className = 'term';
+        span.dataset.term = TERM_WORDS[w.toLowerCase()];
+        span.setAttribute('role', 'button');
+        span.tabIndex = 0;
+        span.textContent = m;
+        frag.append(span);
+        last = at + m.length;
+        return m;
+      });
+      frag.append(s.slice(last));
+      n.replaceWith(frag);
+    });
+  }
+  new MutationObserver(list => list.forEach(m => m.addedNodes.forEach(node => {
+    if (node.nodeType === 1 && !node.closest(NO_TERMS)) linkTerms(node);
+  }))).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('click', e => {
+    const t = e.target.closest('.term');
+    if (t) { e.preventDefault(); showTermPop(t.dataset.term); }
+  });
+
+  // ---------- word taps: tap a word in a question to see it in the other language ----------
+  // Looking a word up before answering is a hint, so that question doesn't count as right
+  // (it comes back for practice). After answering, looking things up is free.
+  let hintWatch = null; // the question on screen: { used, open }
+  let DICT = null;
+  const PERSON_EN = ['I', 'you', 'he / she / you (polite)', 'we', 'they / you all'];
+  const plain = w => w.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ñ/g, 'n');
+  function addWord(map, key, val) {
+    key = key.toLowerCase().trim();
+    if (!key || /\s/.test(key)) return;
+    const list = map[key] || (map[key] = []);
+    if (!list.some(v => v === val || v.split(/,\s*/).includes(val))) list.push(val);
+  }
+  // Built the first time it's needed, from dict.js plus the verbs and word lists the drills use.
+  function dict() {
+    if (DICT) return DICT;
+    const es = {}, en = {};
+    // DICT_EN entries are written by hand, so they win over meanings worked out from the Spanish side.
+    (window.DICT_EN || []).forEach(([e, s]) => addWord(en, e, s));
+    const fixed = new Set(Object.keys(en));
+    const both = (s, e) => {
+      addWord(es, s, e);
+      e.replace(/\(.*?\)/g, '').split(/\s*[,/;]\s*/).forEach(x => {
+        x = x.trim().replace(/^(to|the|a|an) /, '').toLowerCase();
+        if (!fixed.has(x)) addWord(en, x, s);
+      });
+    };
+    Object.entries(window.DICT_WORDS || {}).forEach(([s, e]) => both(s, e));
+    const EN_NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+      'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+    const EN_TENS = { 30: 'thirty', 40: 'forty', 50: 'fifty', 60: 'sixty', 70: 'seventy', 80: 'eighty', 90: 'ninety' };
+    for (let n = 0; n <= 1000; n++) {
+      const s = numberEs(n);
+      if (/\s/.test(s)) continue;
+      addWord(es, s, String(n));
+      const e = EN_NUM[n] || EN_TENS[n];
+      if (e && !fixed.has(e)) addWord(en, e, s);
+    }
+    CONJ.tenses.forEach(t => t.groups.forEach(g => g.verbs.forEach(v => {
+      both(v[0], v[1]);
+      formsOf(g, v).forEach((f, p) => addWord(es, f, `a form of <b>${v[0]}</b> (${v[1].replace(/ \(.*\)/, '')}): ${PERSON_EN[p]}, ${t.title.toLowerCase()}`));
+    })));
+    WORDS.nouns.forEach(n => { both(n[0], n[3]); both(n[1], n[4]); });
+    WORDS.gender.forEach(g => both(g[0], g[2]));
+    WORDS.colors.forEach(c => {
+      both(c[0], c[1]); both(c[3], c[1]);
+      if (c[2]) { both(c[0].replace(/o$/, 'a'), c[1]); both(c[3].replace(/os$/, 'as'), c[1]); }
+    });
+    WORDS.days.concat(WORDS.months, WORDS.whenWords).forEach(d => both(d[0], d[1]));
+    WORDS.demonstratives.forEach(d => d.forms.forEach((f, k) => both(f, d.en[k < 2 ? 0 : 1])));
+    WORDS.possessives.forEach(p => { (p.short || []).forEach(f => both(f, p.en)); both(p.long, p.enLong); });
+    const esPlain = {};
+    Object.keys(es).forEach(k => { const p = plain(k); (esPlain[p] = esPlain[p] || []).push(...es[k]); });
+    DICT = { es, en, esPlain };
+    return DICT;
+  }
+  // What a word means, as { hits, lang } where lang is the language the word turned out to be in.
+  // Tries the zone's language first, then the other one (English hints can hold a Spanish verb).
+  function lookup(word, lang) {
+    const w = word.toLowerCase().replace(/’/g, "'");
+    if (/^\d+$/.test(w)) return +w < 1000000 ? { hits: [numberEs(+w)], lang: 'en' } : null;
+    const d = dict();
+    const inEs = () => d.es[w] || d.esPlain[plain(w)];
+    const inEn = () => {
+      const tries = [w, w.replace(/'s$/, ''), w.replace(/s$/, ''), w.replace(/es$/, ''), w.replace(/ies$/, 'y'),
+        w.replace(/ing$/, ''), w.replace(/ing$/, 'e'), w.replace(/ed$/, ''), w.replace(/d$/, ''), w.replace(/ly$/, '')];
+      for (const t of tries) if (d.en[t]) return d.en[t];
+    };
+    const order = lang === 'es' ? [['es', inEs], ['en', inEn]] : [['en', inEn], ['es', inEs]];
+    for (const [l, f] of order) { const hits = f(); if (hits) return { hits, lang: l }; }
+    return null;
+  }
+  if (/[?&]test\b/.test(location.search)) window.__vamos = { lookup, drills: () => DRILLS };
+  // Splits the words of these elements into tappable spans. lang is the language the text is in.
+  function wordTaps(els, lang) {
+    els.forEach(el => {
+      if (!el) return;
+      el.classList.add('wt-zone');
+      el.dataset.wt = lang;
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) if (!n.parentElement.closest('.blank, .spk')) nodes.push(n);
+      nodes.forEach(n => {
+        const s = n.nodeValue, frag = document.createDocumentFragment();
+        let last = 0;
+        s.replace(/[A-Za-zÀ-ÿ'’]+|\d+/g, (m, at) => {
+          frag.append(s.slice(last, at));
+          const span = document.createElement('span');
+          span.className = 'wt';
+          span.textContent = m;
+          frag.append(span);
+          last = at + m.length;
+          return m;
+        });
+        frag.append(s.slice(last));
+        n.replaceWith(frag);
+      });
+    });
+  }
+  // Called when a question appears: makes its words tappable and starts watching for hints.
+  function watchHints(stage, zones) {
+    closeWordPop();
+    hintWatch = { used: false, open: true };
+    zones.forEach(([sel, lang]) => wordTaps([...stage.querySelectorAll(sel)], lang));
+    const save = loadSave();
+    if (!save.seenWordTip) {
+      save.seenWordTip = true;
+      writeSave(save);
+      stage.insertAdjacentHTML('beforeend', '<p class="wt-tip">💡 New: tap any word in the question to see it in the other language. It counts as a hint, so that question comes back for practice.</p>');
+    }
+    return hintWatch;
+  }
+  // Ends hint-watching once he answers. Returns a note to show if he used a hint.
+  function hintDone(ok) {
+    const used = hintWatch && hintWatch.used;
+    if (hintWatch) hintWatch.open = false;
+    return used && ok ? '<p class="review-note">💡 You used a word hint, so this one comes back for practice.</p>' : '';
+  }
+  function closeWordPop() {
+    document.querySelectorAll('.wt-pop').forEach(p => p.remove());
+    document.querySelectorAll('.wt.on').forEach(w => w.classList.remove('on'));
+  }
+  function showWordPop(span) {
+    closeWordPop();
+    const word = span.textContent;
+    const found = lookup(word, span.closest('[data-wt]').dataset.wt);
+    const live = found && hintWatch && hintWatch.open;
+    if (live) hintWatch.used = true;
+    span.classList.add('on');
+    // Read out the Spanish side: the word itself, or the first plain Spanish answer for an English word.
+    let sayIt = '';
+    if (found) {
+      sayIt = found.lang === 'es' ? word : found.hits[0].replace(/<[^>]+>|\(.*?\)/g, '').split(/ [/·] /)[0].trim();
+      if (/[:=]/.test(sayIt) || /^\d+$/.test(sayIt)) sayIt = '';
+    }
+    const pop = document.createElement('div');
+    pop.className = 'wt-pop';
+    pop.innerHTML = found
+      ? `<div class="wt-row"><span><b>${word}</b> = ${found.hits.slice(0, 3).join(' · ')}</span>${sayIt ? spk(sayIt) : ''}</div>
+         ${live ? "<small>Hint used: this one won't count as right.</small>" : ''}`
+      : `<b>${word}</b><small>No hint for this word.</small>`;
+    document.body.appendChild(pop);
+    const r = span.getBoundingClientRect();
+    const w = pop.offsetWidth;
+    pop.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+    pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  }
+  document.addEventListener('click', e => {
+    const w = e.target.closest('.wt');
+    if (w) { showWordPop(w); return; }
+    if (!e.target.closest('.wt-pop')) closeWordPop();
+  });
 
   // Which questions he got wrong in a lesson, so mixed runs can bring them back.
   function noteMiss(lessonId, id, ok) {
@@ -512,7 +755,8 @@
         <div class="big-emoji">🧠</div>
         <p class="kicker center">Quick refresher</p>
         <h2 class="center">Remember the rules?</h2>
-        <div class="trick">${run.L.recap}</div>`;
+        <div class="trick">${run.L.recap}</div>
+        ${lessonTerms(run.L).length ? `<p class="small center">Word types in this lesson: ${lessonTerms(run.L).map(id => termChip(id)).join(' · ')}</p>` : ''}`;
       foot.innerHTML = '<button class="btn ghost">📖 Show me the lesson again</button><button class="btn">Got it, start</button>';
       foot.querySelector('.ghost').addEventListener('click', () => {
         const cards = run.L.steps.filter(x => x.type === 'teach').map(x => withRows(x, run.version));
@@ -520,6 +764,17 @@
         next();
       });
       foot.querySelector('.btn:not(.ghost)').addEventListener('click', next);
+    },
+
+    // Before the first lesson card: what the word types in this lesson mean.
+    terms(s, stage, foot) {
+      stage.innerHTML = `
+        <div class="big-emoji">🧩</div>
+        <p class="kicker center">Quick reminder</p>
+        <h2 class="center">Words you'll see in this lesson</h2>
+        ${s.ids.map(id => `<div class="term-block">${termHTML(id)}</div>`).join('')}
+        <p class="small center">Forget one later? Tap any underlined word, like ${termChip(s.ids[0], TERMS[s.ids[0]].name.toLowerCase())}, for a reminder.</p>`;
+      continueButton(foot, 'Got it');
     },
 
     note(s, stage, foot) {
@@ -550,10 +805,12 @@
           : `<h2 class="prompt">${blank(s.prompt)}</h2>${s.en ? `<p class="hint">${s.en}</p>` : ''}`}
         <div class="options">${opts.map((o, k) => `<button class="opt" data-k="${k}">${o.text}</button>`).join('')}</div>`;
       if (s.listen) setTimeout(() => say(s.say), 250);
+      const hw = watchHints(stage, [['.prompt', 'es'], ['.hint', 'en']]);
 
       stage.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
         const chosen = opts[+b.dataset.k];
         const right = opts.find(o => o.correct);
+        const note = hintDone(chosen.correct);
         stage.querySelectorAll('.opt').forEach(x => {
           x.disabled = true;
           if (opts[+x.dataset.k].correct) x.classList.add('right');
@@ -565,8 +822,8 @@
           stage.querySelector('.prompt').innerHTML = blank(s.prompt, right.text);
           full = s.sayAfter || s.prompt.replace('___', right.text);
         }
-        score(s, chosen.correct);
-        feedback(foot, chosen.correct, chosen.correct ? s.explain : chosen.why, chosen.correct ? null : right.text, s.rule, full);
+        score(s, chosen.correct && !hw.used);
+        feedback(foot, chosen.correct, (chosen.correct ? s.explain : chosen.why) + note, chosen.correct ? null : right.text, s.rule, full);
       }));
     },
 
@@ -580,6 +837,7 @@
         <div class="answer-row"></div>
         <div class="pool"></div>`;
       const row = stage.querySelector('.answer-row'), poolEl = stage.querySelector('.pool');
+      const hw = watchHints(stage, [['.prompt', 'en']]);
       foot.innerHTML = '<button class="btn" disabled>Check</button>';
       const check = foot.querySelector('.btn');
 
@@ -617,7 +875,8 @@
           why = trap ? s.wrongWhy[trap] : 'Close! Check the word order in the answer.';
         }
         row.classList.add(ok ? 'ok' : 'fix');
-        score(s, ok);
+        why += hintDone(ok);
+        score(s, ok && !hw.used);
         feedback(foot, ok, why, ok ? null : sentence, s.rule, sentence);
       });
       draw();
@@ -730,7 +989,10 @@
   // ---------- mini game: a two-button sorting race (SER / ESTAR, EL / LA, …) ----------
   let stopGame = () => {};
 
-  function playSort(s, stage, foot) {
+  // In a lesson, missed cards go to the review deck and Continue moves on. The gym passes
+  // opts.onEnd (points, how many sorted) and opts.onDone instead; cards with a .src lesson
+  // still go to the review deck.
+  function playSort(s, stage, foot, opts = {}) {
     const [A, B] = s.buttons || [['ser', 'SER'], ['estar', 'ESTAR']];
     const deck = shuffle(s.pool);
     let idx = 0, pts = 0, streak = 0, waiting = false, over = false;
@@ -765,7 +1027,11 @@
       else {
         streak = 0;
         sfx.bad();
-        if (!missed.includes(c)) { missed.push(c); const id = gameCardId(run.L.id, c); deckMiss(id); run.toReview.add(id); }
+        if (!missed.includes(c)) {
+          missed.push(c);
+          const src = c.src || (!opts.onDone && run.L.id);
+          if (src) { const id = gameCardId(src, c); deckMiss(id); if (!opts.onDone) run.toReview.add(id); }
+        }
       }
       ptsEl.textContent = pts;
       streakEl.textContent = streak >= 3 ? `🔥 x2` : '';
@@ -786,7 +1052,7 @@
     const timer = setInterval(tick, 100);
     function end() {
       stopGame();
-      run.game = Math.max(run.game, pts);
+      if (opts.onEnd) opts.onEnd(pts, idx); else run.game = Math.max(run.game, pts);
       sfx.done();
       stage.innerHTML = `
         <p class="kicker">Time!</p>
@@ -800,8 +1066,8 @@
             }).join('')}</div>`
           : '<p class="center">No mistakes. ¡Increíble!</p>'}`;
       foot.innerHTML = '<button class="btn ghost">Play again</button><button class="btn">Continue</button>';
-      foot.querySelector('.ghost').addEventListener('click', () => playSort(s, stage, foot));
-      foot.querySelector('.btn:not(.ghost)').addEventListener('click', next);
+      foot.querySelector('.ghost').addEventListener('click', () => playSort(s, stage, foot, opts));
+      foot.querySelector('.btn:not(.ghost)').addEventListener('click', opts.onDone || next);
     }
     stopGame = () => { over = true; clearInterval(timer); document.removeEventListener('keydown', onKey); };
 
@@ -993,12 +1259,262 @@
     };
   }
 
+  // ---------- topic drills: colors, numbers, time, dates, boy / girl words (lists in topics.js) ----------
+  function refRows(rows, hl) {
+    return `<div class="conj">${rows.map(([a, b]) => `<div class="conj-row${a === hl ? ' hl' : ''}">
+      <span class="p">${b}</span><b>${a === hl ? `<em>${a}</em>` : a}</b>${spk(a)}</div>`).join('')}</div>`;
+  }
+  // Up to four different options: the answer first, then the wrong ones that aren't repeats.
+  function fourOptions(answer, wrong) {
+    return shuffle([answer].concat([...new Set(wrong)].filter(w => w && w !== answer).slice(0, 3)));
+  }
+
+  const COLOR_KINDS = ['m', 'f', 'mp', 'fp'];
+  function colorForm(c, k) { // k: 0 one boy word, 1 one girl word, 2 boy words, 3 girl words
+    if (c[2]) return c[0].slice(0, -1) + ENDS[k];
+    return k > 1 ? c[3] : c[0];
+  }
+  function colorQuestion() {
+    const C = WORDS.colors, c = pick(C), kind = pick(['say', 'match', 'match', 'read']);
+    const table = refRows(C.map(x => [x[0], x[1]]), c[0]);
+    if (kind === 'say') {
+      return {
+        kicker: 'Colors', prompt: 'Es ___.', hint: `"It's ${c[1]}."`, answer: c[0],
+        options: fourOptions(c[0], shuffle(C.filter(x => x !== c)).map(x => x[0])),
+        why: chosen => `<b>${chosen}</b> is ${C.find(x => x[0] === chosen)[1]}. ${c[1]} is <b>${c[0]}</b>.`,
+        explain: `<b>${c[0]}</b> = ${c[1]}.`, table, say: `Es ${c[0]}.`,
+      };
+    }
+    if (kind === 'read') {
+      return {
+        kicker: 'Colors', prompt: `${c[0]} = ___`, hint: 'What color is it in English?', answer: c[1],
+        options: fourOptions(c[1], shuffle(C.filter(x => x !== c)).map(x => x[1])),
+        why: chosen => `${chosen} is <b>${C.find(x => x[1] === chosen)[0]}</b>. <b>${c[0]}</b> is ${c[1]}.`,
+        explain: `<b>${c[0]}</b> = ${c[1]}.`, table, say: c[0],
+      };
+    }
+    const n = pick(WORDS.nouns.filter(x => !x[5])), plural = Math.random() < 0.45, k = nounKind(n, plural);
+    const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
+    const answer = colorForm(c, k);
+    const wrong = c[2] ? [0, 1, 2, 3].filter(i => i !== k).map(i => colorForm(c, i)) : [colorForm(c, k ^ 2)];
+    const others = shuffle(C.filter(x => x !== c)).map(x => colorForm(x, k));
+    const rule = c[2]
+      ? `<b>${noun}</b> is ${KIND[k]} (${ARTICLE[k]} ${noun}), so <b>${c[0]}</b> becomes <b>${answer}</b>.`
+      : `<b>${c[0]}</b> doesn't change for boy / girl, only for more than one: <b>${c[3]}</b>. Here it's ${plural ? 'more than one' : 'just one'}: <b>${answer}</b>.`;
+    return {
+      kicker: 'Colors · make it match', prompt: `${ARTICLE[k]} ${noun} ___`, hint: `"the ${c[1]} ${nEn}"`, answer,
+      options: fourOptions(answer, wrong.concat(others)),
+      why: chosen => C.some(x => x !== c && [0, 1, 2, 3].some(i => colorForm(x, i) === chosen))
+        ? `<b>${chosen}</b> is a different color. ${c[1]} is <b>${c[0]}</b>. ${rule}`
+        : rule,
+      explain: `${rule} Colors go after the thing.`, table: `<p class="small">${WORDS.colorRule}</p>`, say: `${ARTICLE[k]} ${noun} ${answer}`,
+    };
+  }
+
+  const UNITS = ['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez', 'once', 'doce', 'trece', 'catorce',
+    'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve', 'veinte', 'veintiuno', 'veintidós', 'veintitrés', 'veinticuatro',
+    'veinticinco', 'veintiséis', 'veintisiete', 'veintiocho', 'veintinueve'];
+  const TENS = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+  const HUNDREDS = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+  function under100(n) { return n < 30 ? UNITS[n] : TENS[Math.floor(n / 10)] + (n % 10 ? ` y ${UNITS[n % 10]}` : ''); }
+  function under1000(n) {
+    if (n === 100) return 'cien';
+    const h = Math.floor(n / 100), r = n % 100;
+    return [h ? HUNDREDS[h] : '', r || !h ? under100(r) : ''].filter(Boolean).join(' ');
+  }
+  // Spanish words for 0 to 999,999. Before a noun, "uno" becomes "un": veintiún dólares.
+  function numberEs(n, beforeNoun) {
+    const th = Math.floor(n / 1000), r = n % 1000;
+    let s = th ? `${th === 1 ? 'mil' : `${under1000(th)} mil`}${r ? ` ${under1000(r)}` : ''}` : under1000(r);
+    s = s.replace(/veintiuno mil/, 'veintiún mil').replace(/\buno mil/, 'un mil');
+    if (beforeNoun) s = s.replace(/veintiuno$/, 'veintiún').replace(/\buno$/, 'un');
+    return s;
+  }
+  // Numbers that are easy to mix up with n: swapped digits, 6 ↔ 7, 15 ↔ 50, one ten off.
+  function nearNumbers(n) {
+    const s = String(n), out = [];
+    if (s.length === 2 && s[1] !== '0') out.push(+(s[1] + s[0]));
+    if (/[67]/.test(s)) out.push(+s.replace(/[67]/, d => (d === '6' ? '7' : '6')));
+    if (n === 15) out.push(50);
+    if (n === 50) out.push(15);
+    if (n >= 11 && n <= 19) out.push((n - 10) * 10);
+    if (n % 100 >= 20 && n % 100 < 70 && n % 10 === 0 && n < 100) out.push(n / 10 + 10);
+    if (n >= 100 && n < 1000) out.push(n % 100 ? Math.floor(n / 100) * 100 : n + 50, (Math.floor(n / 100) % 9 + 1) * 100 + n % 100);
+    out.push(n + 10, n > 10 ? n - 10 : n + 20, n + 1, n + 100);
+    return [...new Set(out)].filter(x => x !== n && x >= 0);
+  }
+  function numberPick() {
+    const r = Math.random();
+    return r < 0.25 ? Math.floor(Math.random() * 31) : r < 0.6 ? 31 + Math.floor(Math.random() * 69)
+      : r < 0.9 ? 100 + Math.floor(Math.random() * 900) : 1000 + Math.floor(Math.random() * 1500);
+  }
+  function numberQuestion() {
+    const n = numberPick(), kind = pick(['toWords', 'toDigits', 'listen', 'listen', 'price']);
+    const near = nearNumbers(n);
+    const table = `<p class="small">${WORDS.numberTrick}</p>`;
+    if (kind === 'toWords' || kind === 'price') {
+      const price = kind === 'price';
+      const words = x => numberEs(x, price);
+      const answer = words(n);
+      const byWord = {};
+      near.forEach(x => { byWord[words(x)] = x; });
+      return {
+        kicker: price ? 'Numbers · prices' : 'Numbers', wide: true,
+        prompt: price ? `$${n} = ___ dólares` : `${n} = ___`, hint: price ? 'How do you say the price?' : 'Pick the Spanish.',
+        answer, options: fourOptions(answer, near.map(words)),
+        why: chosen => `<b>${chosen}</b> is ${byWord[chosen]}. ${n} is <b>${answer}</b>.`,
+        explain: `${n} = <b>${answer}</b>.${price && /un$/.test(answer) ? ' <b>Uno</b> becomes <b>un</b> before a noun like dólares.' : ''}`,
+        table, say: price ? `${answer} dólares` : answer,
+      };
+    }
+    const answer = String(n);
+    const words = numberEs(n);
+    return {
+      kicker: kind === 'listen' ? 'Numbers · listen' : 'Numbers', listen: kind === 'listen' ? words : null,
+      prompt: kind === 'listen' ? '' : `${words} = ___`, hint: kind === 'listen' ? 'What number do you hear?' : 'Pick the number.',
+      answer, options: fourOptions(answer, near.map(String)),
+      why: chosen => `<b>${chosen}</b> is <b>${numberEs(+chosen)}</b>. You ${kind === 'listen' ? 'heard' : 'have'} <b>${words}</b> = ${n}.`,
+      explain: `<b>${words}</b> = ${n}.`, table, say: words,
+    };
+  }
+
+  const HOURS = ['doce', 'una', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez', 'once', 'doce'];
+  const MINUTES = { 0: '', 5: 'y cinco', 10: 'y diez', 15: 'y cuarto', 20: 'y veinte', 30: 'y media', 40: 'y cuarenta', 45: 'y cuarenta y cinco', 50: 'y cincuenta' };
+  function timeEs(h, m, at) {
+    const lead = at ? (h === 1 ? 'a la' : 'a las') : (h === 1 ? 'Es la' : 'Son las');
+    return `${lead} ${HOURS[h]}${MINUTES[m] ? ` ${MINUTES[m]}` : ''}`;
+  }
+  function clock(h, m) { return `${h}:${String(m).padStart(2, '0')}`; }
+  function timeQuestion() {
+    const h = 1 + Math.floor(Math.random() * 12), m = +pick(Object.keys(MINUTES)), kind = pick(['say', 'say', 'read', 'at', 'part']);
+    const table = `<p class="small">${WORDS.timeRule}</p><div class="trick">💡 ${WORDS.timeTrick}</div>`;
+    const answer = timeEs(h, m);
+    if (kind === 'say') {
+      const other = h === 1 ? `Son las una${MINUTES[m] ? ` ${MINUTES[m]}` : ''}` : `Es la ${HOURS[h]}${MINUTES[m] ? ` ${MINUTES[m]}` : ''}`;
+      const swapMin = { 15: 45, 45: 15, 30: 15, 0: 30, 5: 50, 50: 5, 10: 20, 20: 10, 40: 30 }[m];
+      const wrongs = [other, timeEs(h, swapMin), timeEs(h % 12 + 1, m)];
+      return {
+        kicker: 'Time', wide: true, prompt: '¿Qué hora es? ___.', hint: `🕒 It's ${clock(h, m)}.`, answer,
+        options: fourOptions(answer, wrongs),
+        why: chosen => chosen === other
+          ? (h === 1 ? 'One o\'clock is just one hour, so it\'s <b>Es la una</b>.' : `<b>Es la</b> is only for one o'clock (la una). For every other hour, say <b>Son las</b>: <b>${answer}</b>.`)
+          : `<b>${chosen}</b> is a different time. ${clock(h, m)} is <b>${answer}</b>.`,
+        explain: `${clock(h, m)} → <b>${answer}</b>.`, table, say: answer,
+      };
+    }
+    if (kind === 'read') {
+      const wrongs = [clock(h, { 15: 45, 45: 15, 30: 15, 0: 30, 5: 50, 50: 5, 10: 20, 20: 10, 40: 30 }[m]), clock(h % 12 + 1, m), clock(h === 1 ? 12 : h - 1, m)];
+      const opts = fourOptions(clock(h, m), wrongs);
+      return {
+        kicker: 'Time', prompt: `${answer}. → ___`, hint: 'What time is it?', answer: clock(h, m), options: opts,
+        why: chosen => `<b>${chosen}</b> would be "${timeEs(+chosen.split(':')[0], +chosen.split(':')[1]).toLowerCase()}". <b>${answer}</b> is ${clock(h, m)}.`,
+        explain: `<b>${answer}</b> = ${clock(h, m)}.`, table, say: answer,
+      };
+    }
+    if (kind === 'at') {
+      const right = h === 1 ? 'a la' : 'a las';
+      return {
+        kicker: 'Time · at what time?', prompt: `La cita es ___ ${HOURS[h]}${MINUTES[m] ? ` ${MINUTES[m]}` : ''}.`,
+        hint: `"The appointment is at ${clock(h, m)}."`, answer: right,
+        options: fourOptions(right, h === 1 ? ['a las', 'en la', 'la'] : ['a la', 'en las', 'las']),
+        why: chosen => `"At" a time is <b>a la</b> (one o'clock) or <b>a las</b> (every other hour). Not <b>en</b>.`,
+        explain: `At ${clock(h, m)} → <b>${timeEs(h, m, true)}</b>.`, table, say: `La cita es ${timeEs(h, m, true)}.`,
+      };
+    }
+    const part = pick(WORDS.timeParts), ph = pick(part[2]);
+    const ampm = part[0] === 'de la mañana' ? 'AM' : 'PM';
+    return {
+      kicker: 'Time · morning or night?', wide: true, prompt: `${timeEs(ph, 0)} ___.`, hint: `🕒 ${ph}:00 ${ampm}`,
+      answer: part[0], options: fourOptions(part[0], WORDS.timeParts.map(p => p[0])),
+      why: () => `${ph}:00 ${ampm} is ${part[1]}: <b>${part[0]}</b>.`,
+      explain: `${ph}:00 ${ampm} → <b>${part[0]}</b> (${part[1]}).`, table, say: `${timeEs(ph, 0)} ${part[0]}.`,
+    };
+  }
+
+  function dateEs(d, month) { return `el ${d === 1 ? 'primero' : numberEs(d)} de ${month[0]}`; }
+  function dateQuestion() {
+    const D = WORDS.days, M = WORDS.months, kind = pick(['day', 'month', 'date', 'date', 'on', 'when']);
+    const table = `<p class="small">${WORDS.dateRule}</p><div class="trick">💡 ${WORDS.dateTrick}</div>`;
+    if (kind === 'day') {
+      const d = pick(D);
+      return {
+        kicker: 'Dates · days', prompt: 'Hoy es ___.', hint: `"Today is ${d[1]}."`, answer: d[0],
+        options: fourOptions(d[0], shuffle(D.filter(x => x !== d)).map(x => x[0])),
+        why: chosen => `<b>${chosen}</b> is ${D.find(x => x[0] === chosen)[1]}. ${d[1]} is <b>${d[0]}</b>.`,
+        explain: `<b>${d[0]}</b> = ${d[1]}. No capital letter in Spanish.`, table: refRows(D, d[0]), say: `Hoy es ${d[0]}.`,
+      };
+    }
+    if (kind === 'month') {
+      const mo = pick(M);
+      return {
+        kicker: 'Dates · months', prompt: 'Mi cumpleaños es en ___.', hint: `"My birthday is in ${mo[1]}."`, answer: mo[0],
+        options: fourOptions(mo[0], shuffle(M.filter(x => x !== mo)).map(x => x[0])),
+        why: chosen => `<b>${chosen}</b> is ${M.find(x => x[0] === chosen)[1]}. ${mo[1]} is <b>${mo[0]}</b>.`,
+        explain: `<b>${mo[0]}</b> = ${mo[1]}.`, table: refRows(M, mo[0]), say: `Mi cumpleaños es en ${mo[0]}.`,
+      };
+    }
+    if (kind === 'date') {
+      const mo = pick(M), d = Math.random() < 0.2 ? 1 : 2 + Math.floor(Math.random() * 27);
+      const answer = dateEs(d, mo);
+      const other = pick(M.filter(x => x !== mo));
+      const wrongs = [`el ${mo[0]} ${numberEs(d)}`, `en ${answer}`, dateEs(d, other), d === 1 ? `el uno ${mo[0]}` : dateEs(nearNumbers(d).find(x => x > 1 && x < 29) || d + 1, mo)];
+      return {
+        kicker: 'Dates', wide: true, prompt: 'La cita es ___.', hint: `"The appointment is on ${mo[1]} ${d}."`, answer,
+        options: fourOptions(answer, wrongs),
+        why: chosen => chosen.startsWith(`el ${mo[0]}`)
+          ? `Spanish says the day first: <b>el + number + de + month</b>: <b>${answer}</b>.`
+          : chosen.startsWith('en ')
+            ? `No <b>en</b> before a date. "On ${mo[1]} ${d}" is just <b>${answer}</b>.`
+            : `That's a different date. ${mo[1]} ${d} is <b>${answer}</b>.`,
+        explain: `${mo[1]} ${d} → <b>${answer}</b>.${d === 1 ? ' The first of the month is <b>el primero</b>.' : ''}`, table, say: `La cita es ${answer}.`,
+      };
+    }
+    if (kind === 'on') {
+      const d = pick(D), every = Math.random() < 0.35;
+      const answer = every ? 'los' : 'el';
+      const day = every && !/s$/.test(d[0]) ? `${d[0]}s` : d[0];
+      return {
+        kicker: 'Dates · on Monday', prompt: `Trabajo ___ ${day}.`, hint: every ? `"I work on ${d[1]}s (every week)."` : `"I work on ${d[1]} (this week)."`,
+        answer, options: fourOptions(answer, ['el', 'los', 'en', 'en el']),
+        why: chosen => chosen.startsWith('en')
+          ? `"On" a day is not <b>en</b>. It's just <b>el ${d[0]}</b> (this one) or <b>los ${day}</b> (every week).`
+          : every ? `Every week = <b>los ${day}</b>.` : `One day this week = <b>el ${d[0]}</b>. <b>Los</b> would mean every ${d[1]}.`,
+        explain: every ? `Every ${d[1]} → <b>los ${day}</b>.` : `On ${d[1]} → <b>el ${d[0]}</b>. No "en".`, table, say: `Trabajo ${answer} ${day}.`,
+      };
+    }
+    const W = WORDS.whenWords, w = pick(W);
+    return {
+      kicker: 'Dates · when?', wide: true, prompt: 'Vamos ___.', hint: `"We're going ${w[1]}."`, answer: w[0],
+      options: fourOptions(w[0], shuffle(W.filter(x => x !== w)).map(x => x[0])),
+      why: chosen => `<b>${chosen}</b> means ${W.find(x => x[0] === chosen)[1]}. ${cap(w[1])} is <b>${w[0]}</b>.`,
+      explain: `<b>${w[0]}</b> = ${w[1]}.`, table: refRows(W, w[0]), say: `Vamos ${w[0]}.`,
+    };
+  }
+
+  function genderQuestion() {
+    const G = WORDS.gender;
+    const tricky = G.filter(g => g[3] !== '-a ending' && g[3] !== '-o ending');
+    const g = Math.random() < 0.6 ? pick(tricky) : pick(G);
+    const answer = g[1] === 'm' ? 'el' : 'la';
+    const why = g[4] || (g[1] === 'm' ? '-o ending: a boy word.' : '-a ending: a girl word.');
+    return {
+      kicker: 'Boy or girl word?', prompt: `___ ${g[0]}`, hint: `"the ${g[2]}"`, answer, options: ['el', 'la'],
+      why: () => `<b>${g[0]}</b> is a ${g[1] === 'm' ? 'boy' : 'girl'} word: <b>${answer} ${g[0]}</b>. ${why}`,
+      explain: `<b>${answer} ${g[0]}</b>. ${why}`, table: `<p class="small">${WORDS.genderRule}</p>`, say: `${answer} ${g[0]}`,
+    };
+  }
+
   // Every drill the gym can run. Past and future tenses mix their regular and irregular groups.
   const DRILLS = [];
   PRESENT.groups.forEach(g => DRILLS.push({ id: g.id, section: 'Verbs: present', title: g.title, make: () => verbQuestion(g) }));
   CONJ.tenses.slice(1).forEach(t => DRILLS.push({ id: t.id, section: 'Verbs: past & future', title: t.title, make: () => verbQuestion(pick(t.groups)) }));
   DRILLS.push({ id: 'demo', section: 'Little words', title: 'This & that', make: demoQuestion });
   DRILLS.push({ id: 'poss', section: 'Little words', title: 'My & mine', make: possQuestion });
+  DRILLS.push({ id: 'gender', section: 'Little words', title: 'Boy or girl word?', make: genderQuestion });
+  DRILLS.push({ id: 'colors', section: 'Everyday words', title: 'Colors', make: colorQuestion });
+  DRILLS.push({ id: 'numbers', section: 'Everyday words', title: 'Numbers & prices', make: numberQuestion });
+  DRILLS.push({ id: 'time', section: 'Everyday words', title: 'Time', make: timeQuestion });
+  DRILLS.push({ id: 'dates', section: 'Everyday words', title: 'Days & dates', make: dateQuestion });
 
   // ---------- Rules: every rule and memory trick, open from anywhere ----------
   function groupRules(g, withHead) {
@@ -1021,6 +1537,8 @@
     ov.className = 'overlay';
     ov.innerHTML = `<div class="overlay-in">
       <div class="ov-top"><h2>📖 Rules</h2><button class="quit" aria-label="Close">✕</button></div>
+      <p class="kicker">Word types</p>
+      ${Object.keys(TERMS).map(id => `<details><summary>${TERMS[id].name}</summary><div class="details-in term-block">${termHTML(id)}</div></details>`).join('')}
       <p class="kicker">Verbs: present</p>
       ${PRESENT.groups.map(g => `<details><summary>${g.title}</summary><div class="details-in">${groupRules(g, false)}</div></details>`).join('')}
       <p class="kicker">Verbs: past & future</p>
@@ -1035,6 +1553,24 @@
       <details><summary>My & mine</summary><div class="details-in">
         <p>${WORDS.possRule}</p><p>${WORDS.possLongRule}</p>${possTable(null)}
         <div class="trick">💡 ${WORDS.possTrick}</div></div></details>
+      <details><summary>Boy or girl word?</summary><div class="details-in">
+        <p>${WORDS.genderRule}</p>
+        <p class="small">The tricky ones:</p>
+        ${refRows(WORDS.gender.filter(g => g[3] === 'tricky').map(g => [`${g[1] === 'm' ? 'el' : 'la'} ${g[0]}`, g[2]]))}</div></details>
+      <p class="kicker">Everyday words</p>
+      <details><summary>Colors</summary><div class="details-in">
+        <p>${WORDS.colorRule}</p><div class="trick">💡 ${WORDS.colorTrick}</div>
+        ${refRows(WORDS.colors.map(c => [c[2] ? `${c[0]} / ${c[0].slice(0, -1)}a` : c[0], c[1]]))}</div></details>
+      <details><summary>Numbers</summary><div class="details-in">
+        <p>${WORDS.numberRule}</p><div class="trick">💡 ${WORDS.numberTrick}</div>
+        ${refRows([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 21, 30, 31, 40, 50, 60, 70, 80, 90, 100, 101, 150, 200, 500, 700, 900, 1000, 2000]
+          .map(n => [numberEs(n), String(n)]))}</div></details>
+      <details><summary>Time</summary><div class="details-in">
+        <p>${WORDS.timeRule}</p><div class="trick">💡 ${WORDS.timeTrick}</div>
+        ${refRows([[1, 0], [2, 0], [3, 15], [4, 30], [7, 20], [10, 45]].map(([h, m]) => [timeEs(h, m), clock(h, m)]))}</div></details>
+      <details><summary>Days & dates</summary><div class="details-in">
+        <p>${WORDS.dateRule}</p><div class="trick">💡 ${WORDS.dateTrick}</div>
+        ${refRows(WORDS.days)}${refRows(WORDS.months)}${refRows(WORDS.whenWords)}</div></details>
       <p class="kicker">From your lessons</p>
       ${LESSONS.map(L => {
         const cards = L.steps.filter(s => s.type === 'teach');
@@ -1078,9 +1614,15 @@
           <div class="chips">${DRILLS.filter(d => d.section === sec).map(d =>
             `<button class="chip${on.includes(d.id) ? ' on' : ''}" data-d="${d.id}">${d.title}</button>`).join('')}</div>`).join('')}
         <p class="center small">Stuck? Tap 📖 at the top for the rules.</p>
+        <p class="kicker center chip-head">Races</p>
+        <div class="race-row">${RACES.map(r => {
+          const best = (loadSave().races || {})[r.id];
+          return `<button class="tool race-btn" data-r="${r.id}"><span>⏱️</span><b>${r.title}</b><small>${best ? `Your best: ${best}` : r.sub}</small></button>`;
+        }).join('')}</div>
       </div>
       <div class="foot"><button class="btn">Start</button></div>`;
     wireTop();
+    app.querySelectorAll('.race-btn').forEach(b => b.addEventListener('click', () => startRace(RACES.find(r => r.id === b.dataset.r))));
     const chips = [...app.querySelectorAll('.chip')];
     const start = app.querySelector('.foot .btn');
     const picked = () => chips.filter(c => c.classList.contains('on')).map(c => c.dataset.d);
@@ -1099,30 +1641,67 @@
     });
   }
 
+  // The lesson races, open any time in the gym, with extra words mixed in.
+  const RACES = [
+    {
+      id: 'el-la', title: 'EL or LA', lesson: 'el-la', sub: '60 seconds, tricky words mixed in',
+      extra: () => WORDS.gender.map(g => ({ s: `___ ${g[0]}`, v: g[1] === 'm' ? 'el' : 'la', f: g[1] === 'm' ? 'el' : 'la', why: g[3] === 'tricky' ? 'rebel' : g[3] })),
+    },
+    { id: 'ser-estar', title: 'SER or ESTAR', lesson: 'ser-estar', sub: '60 seconds, sentences from lesson 1' },
+  ];
+  function startRace(r) {
+    const L = LESSONS.find(x => x.id === r.lesson);
+    const game = L.steps.find(s => s.type === 'game');
+    const seen = new Set(game.pool.map(c => c.s));
+    const pool = game.pool.map(c => Object.assign({ src: L.id }, c)).concat((r.extra ? r.extra() : []).filter(c => !seen.has(c.s)));
+    const g = Object.assign({}, game, { pool });
+    app.innerHTML = `${gymTop(`${r.title} race`)}<div class="stage">
+        <p class="kicker">Race</p><div class="big-emoji">⏱️</div><h2 class="center">${g.title}</h2><p class="center">${g.howto}</p>
+      </div><div class="foot"><button class="btn">Start!</button></div>`;
+    app.querySelector('.quit').addEventListener('click', () => { stopGame(); showGymSetup(); });
+    app.querySelector('.book').addEventListener('click', openRules);
+    const stage = app.querySelector('.stage'), foot = app.querySelector('.foot');
+    foot.querySelector('.btn').addEventListener('click', () => playSort(g, stage, foot, {
+      onEnd(pts, sorted) {
+        const save = loadSave();
+        save.races = save.races || {};
+        save.races[r.id] = Math.max(save.races[r.id] || 0, pts);
+        writeSave(save);
+        if (sorted >= 10) bumpStreak(); // a race counts like 10 gym reps
+      },
+      onDone: showGymSetup,
+    }));
+  }
+
   function gymQuestion() {
     const q = pick(gym.drills).make();
     app.innerHTML = `${gymTop(`✓ ${gym.right}${gym.streak >= 3 ? ` · 🔥 ${gym.streak}` : ''}`)}
       <div class="stage">
         <p class="kicker">${q.kicker}</p>
-        <h2 class="prompt">${blank(q.prompt)}</h2>
+        ${q.listen
+          ? `<div class="listen"><button class="spk big" data-say="${attr(q.listen)}" aria-label="Play">🔊</button>${spk(q.listen, true)}</div>`
+          : `<h2 class="prompt">${blank(q.prompt)}</h2>`}
         <p class="hint">${q.hint}</p>
-        <div class="options grid2">${q.options.map((o, k) => `<button class="opt" data-k="${k}">${o}</button>`).join('')}</div>
+        <div class="options${q.wide ? '' : ' grid2'}">${q.options.map((o, k) => `<button class="opt" data-k="${k}">${o}</button>`).join('')}</div>
       </div>
       <div class="foot"></div>`;
     wireTop();
+    if (q.listen) setTimeout(() => say(q.listen), 250);
     const stage = app.querySelector('.stage'), foot = app.querySelector('.foot');
+    const hw = watchHints(stage, [['.prompt', 'es'], ['.hint', 'en']]);
     stage.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
       const chosen = q.options[+b.dataset.k];
       const ok = chosen === q.answer;
+      const note = hintDone(ok);
       stage.querySelectorAll('.opt').forEach(x => {
         x.disabled = true;
         if (q.options[+x.dataset.k] === q.answer) x.classList.add('right');
         else if (x !== b) x.classList.add('dim');
       });
       if (!ok) b.classList.add('wrong');
-      stage.querySelector('.prompt').innerHTML = blank(q.prompt, q.answer);
+      if (!q.listen) stage.querySelector('.prompt').innerHTML = blank(q.prompt, q.answer);
       gym.asked++;
-      if (ok) { gym.right++; gym.streak++; } else gym.streak = 0;
+      if (ok && !hw.used) { gym.right++; gym.streak++; } else gym.streak = 0;
       let bonus = '';
       if (gym.asked >= 10 && !gym.counted) {
         gym.counted = true;
@@ -1132,7 +1711,7 @@
       ok ? sfx.good() : sfx.bad();
       foot.innerHTML = `<div class="sheet ${ok ? 'good' : 'bad'}">
         <h3>${ok ? pick(PRAISE) : 'Not quite'}</h3><p>${ok ? q.explain : q.why(chosen)}</p>
-        ${q.table}${bonus}
+        ${q.table}${note.replace('comes back for practice', "doesn't count toward your score")}${bonus}
         <div class="sheet-row"><button class="btn">Next</button></div></div>`;
       foot.querySelector('.btn').addEventListener('click', gymQuestion);
       setTimeout(() => say(q.say), ok ? 300 : 500);

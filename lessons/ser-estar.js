@@ -7,6 +7,7 @@ window.LESSONS.push({
   title: 'Ser vs. Estar',
   subtitle: 'Two ways to say "to be"',
   minutes: 10,
+  terms: ['verb', 'adjective'],
 
   recap: `<p><b>SER = DOCTOR</b><br>Description, Occupation, Characteristic, Time, Origin, Relationship</p>
     <p><b>ESTAR = PLACE</b><br>Position, Location, Action, Condition, Emotion</p>

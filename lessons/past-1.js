@@ -6,6 +6,7 @@ window.LESSONS.push({
   title: 'What did you do?',
   subtitle: 'Talk about yesterday: the past tense',
   minutes: 10,
+  terms: ['verb', 'tense', 'conjugate'],
 
   recap: `<p>Clue words: <b>ayer, anoche, el sábado</b> → finished past.</p>
     <p>-AR: <b>-é, -aste, -ó, -amos, -aron</b>. -ER / -IR: <b>-í, -iste, -ió, -imos, -ieron</b>.</p>

@@ -48,6 +48,9 @@ body {
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
 }
 button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; }
+/* Tapping a word shouldn't select it or open Chrome's "Touch to search" (the app has its own word hints). */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, .code-box { -webkit-user-select: text; user-select: text; }
 
 /* ---------- buttons ---------- */
 .btn {
@@ -90,6 +93,9 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
 .logo { font-size: 2.6rem; font-weight: 900; color: var(--brand); line-height: 1.1; }
 .tagline { color: var(--muted); margin: 6px 0 0; font-weight: 700; }
 .lessons { display: grid; gap: 12px; }
+.unit-head { margin: 10px 2px -2px; font-size: 1.05rem; display: flex; align-items: center; gap: 8px; color: var(--ink, inherit); }
+.unit-head:first-child { margin-top: 0; }
+.unit-head span { font-size: 1.2rem; }
 
 .streak-strip {
   display: flex;
@@ -425,3 +431,91 @@ p.version-tag { margin: -4px 0 10px; }
 .stat { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 12px; text-align: center; }
 .stat b { display: block; font-size: 1.6rem; color: var(--brand); }
 .stat small { color: var(--muted); font-weight: 700; }
+
+/* ---------- books ---------- */
+.tool.wide { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 12px; }
+.tool .tool-text { display: flex; flex-direction: column; gap: 2px; font-size: 1rem; }
+.bk-picks { display: grid; gap: 10px; margin: 18px 0 12px; }
+.bk-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-bottom-width: 4px;
+  border-radius: 16px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.bk-pick.on { border-color: var(--good); }
+.bk-pick .row-text small { overflow-wrap: anywhere; }
+.bk-lang { flex: none; width: 44px; height: 44px; border-radius: 12px; background: var(--teal); color: #fff; font-weight: 900; display: grid; place-items: center; }
+.bk-title { margin-bottom: 4px; }
+.bk-ch { width: 100%; text-align: left; }
+.bk-num { flex: none; width: 1.8em; font-weight: 900; color: var(--muted); text-align: center; }
+.bk-ok { color: var(--good); font-weight: 800; }
+.bk-todo { color: var(--muted); font-weight: 700; }
+.bk-step { margin: 18px 0 6px; line-height: 1.4; }
+.bk-choose { flex: none; border-radius: 12px; background: var(--brand); color: #fff; font-weight: 800; padding: 10px 12px; font-size: .9rem; }
+.bk-current { border-color: var(--good); }
+.spk.playing { background: var(--teal); border-color: var(--teal); color: #fff; }
+.bk-row { display: flex; gap: 8px; align-items: stretch; }
+.bk-row .bk-ch { flex: 1; min-width: 0; }
+.bk-here .bk-ch { border-color: var(--teal); }
+.bk-rematch { flex: none; width: 50px; border: 2px solid var(--line); border-radius: 14px; background: var(--card); font-size: 20px; }
+.bk-seq { display: flex; justify-content: center; align-items: center; gap: 10px; margin: 20px 0 12px; }
+.bk-seq .l {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 1.15rem;
+  background: var(--card);
+  border: 2px solid var(--line);
+  color: var(--muted);
+  transition: transform .2s, background .2s;
+}
+.bk-seq .l.on { background: var(--teal); border-color: var(--teal); color: #fff; transform: scale(1.12); }
+.bk-seq .l.done { color: var(--ink); }
+.bk-seq i { color: var(--muted); font-style: normal; font-weight: 800; }
+.bk-bar { flex: none; margin: 8px 0 4px; height: 10px; }
+.bk-controls { display: flex; justify-content: center; align-items: center; gap: 24px; margin: 18px 0 2px; }
+.bk-c { width: 60px; height: 60px; border-radius: 50%; background: var(--card); border: 2px solid var(--line); font-size: 22px; }
+.bk-c.main { width: 88px; height: 88px; font-size: 36px; background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 5px 0 var(--brand-dark); }
+.bk-c.main:active { transform: translateY(2px); box-shadow: 0 3px 0 var(--brand-dark); }
+.bk-nudge { border: 2px dashed var(--line); border-radius: 16px; padding: 4px 12px 10px; margin-top: 14px; }
+.bk-nudge-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bk-nudge-row button { border: 2px solid var(--line); border-radius: 12px; padding: 10px 6px; font-weight: 800; font-size: .9rem; background: var(--card); }
+.bk-nudge-msg { min-height: 1.2em; margin: 6px 0 0; color: var(--teal); font-weight: 700; }
+.bk-settings { display: grid; gap: 10px; margin: 16px 0 8px; }
+.bk-settings label { display: flex; flex-direction: column; gap: 4px; font-weight: 800; font-size: .85rem; color: var(--muted); }
+.bk-settings select { font: inherit; font-size: 1rem; color: var(--ink); background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+
+/* ---------- gym races ---------- */
+.race-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 6px 0 12px; }
+
+/* ---------- word types (verb, noun…): underlined, tap for a reminder ---------- */
+.term { border-bottom: 2px dotted var(--teal); cursor: pointer; }
+.term-block { background: var(--card); border: 2px solid var(--line); border-radius: 18px; padding: 2px 14px 12px; margin: 12px 0; }
+.details-in.term-block { border: none; margin: 0; background: none; }
+.term-name { font-size: 1.45rem; margin: 2px 0 4px; }
+.term-ex { background: var(--bg); border-radius: 14px; padding: 2px 12px; margin: 10px 0; }
+.term-ex p { margin: 8px 0; }
+.term-block .row { background: var(--bg); }
+.term-block u { text-decoration: none; background: var(--trick-bg); border-radius: 5px; padding: 0 4px; font-weight: 800; }
+.pop { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .45); display: flex; align-items: flex-end; justify-content: center; }
+.pop-card { width: 100%; max-width: 480px; max-height: 85vh; overflow-y: auto; margin: 0; border-radius: 22px 22px 0 0; border-bottom: none; padding-bottom: calc(14px + env(safe-area-inset-bottom)); animation: up .2s ease-out; }
+
+/* Word taps: any word in a question can be tapped for a hint */
+.wt { cursor: pointer; border-radius: 4px; transition: background .15s; }
+.wt.on { background: var(--trick-bg); box-shadow: 0 0 0 2px var(--trick-bg); }
+.wt-pop { position: absolute; z-index: 60; max-width: 280px; background: var(--card); color: var(--ink);
+  border: 2px solid var(--line); border-radius: 14px; padding: 8px 12px; line-height: 1.4; font-size: .95rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18); animation: pop-in .15s ease-out; }
+.wt-pop .wt-row { display: flex; align-items: center; gap: 8px; }
+.wt-pop .spk { flex: none; }
+.wt-pop small { display: block; color: var(--muted); margin-top: 4px; font-size: .8rem; }
+.wt-tip { margin: 14px 0 0; font-size: .85rem; color: var(--muted); text-align: center; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }

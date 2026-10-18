@@ -6,6 +6,7 @@ window.LESSONS.push({
   title: 'El or La?',
   subtitle: 'Boy words, girl words, and making them match',
   minutes: 10,
+  terms: ['noun', 'article', 'adjective'],
 
   recap: `<p><b>-o</b> → usually a boy word (el). <b>-a</b> → usually a girl word (la).</p>
     <p>Always girl: <b>-ción, -sión, -dad</b>. Always boy: <b>-aje, -or</b>, and most <b>-ma</b>.</p>
