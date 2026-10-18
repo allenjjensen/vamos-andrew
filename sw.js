@@ -1,7 +1,7 @@
 // Offline support for the installed app.
 // App files: try the network first (so updates show up), fall back to the saved copy when offline.
 // Fonts: use the saved copy first, they never change.
-const CACHE = 'vamos-v4';
+const CACHE = 'vamos-v5';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'conjugation.js', 'words.js', 'manifest.webmanifest', 'books.js', 'topics.js', 'terms.js', 'dict.js',
   'lessons/ser-estar.js', 'lessons/job-1.js', 'lessons/el-la.js', 'lessons/past-1.js',
@@ -32,7 +32,8 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.origin !== location.origin) return;
-  e.respondWith(fetch(req).then(res => {
+  // no-cache: always ask the server if there's a newer copy (GitHub Pages lets browsers keep files 10 minutes otherwise).
+  e.respondWith(fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(res => {
     if (res.ok) {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(req, copy));
