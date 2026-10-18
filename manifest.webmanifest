@@ -1,0 +1,15 @@
+{
+  "name": "¡Vamos, Andrew!",
+  "short_name": "¡Vamos!",
+  "description": "Spanish in 10 minutes a day: lessons, games and real conversations.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff8f1",
+  "theme_color": "#e2725b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

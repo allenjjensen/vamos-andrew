@@ -6,11 +6,8 @@
   const NAME = 'Andrew';
   const app = document.getElementById('app');
   const LESSONS = window.LESSONS || [];
-  const COMING_SOON = [
-    { title: 'El or La?', subtitle: 'Boy words and girl words' },
-    { title: '-AR verbs', subtitle: 'trabajar, cargar, necesitar' },
-    { title: 'On the job: the phone call', subtitle: 'Book a pickup over the phone' },
-  ];
+  // Shown at the end of the lesson list, so it's clear more are being made (not locked).
+  const COMING_NEXT = ['On the job: the phone call', 'Going to & will: talking about tomorrow', 'Used to: when I was a kid'];
   const PRAISE = ['¡Correcto!', '¡Muy bien!', '¡Excelente!', '¡Eso es!', '¡Perfecto!'];
 
   // ---------- saving (per browser; a blocked or private browser just won't remember) ----------
@@ -163,6 +160,11 @@
   }
   function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
   function hasGame(L) { return L.steps.some(s => s.type === 'game'); }
+  function markOpened(id) {
+    const save = loadSave();
+    save.opened = save.opened || [];
+    if (!save.opened.includes(id)) { save.opened.push(id); writeSave(save); }
+  }
 
   // ---------- home ----------
   function showHome() {
@@ -177,10 +179,17 @@
       ${reviewCard(save)}
       <div class="tools">
         <button class="tool rules-btn"><span>📖</span><b>Rules</b><small>Look anything up</small></button>
-        <button class="tool gym-btn"><span>🏋️</span><b>Verb gym</b><small>Practice conjugating</small></button>
+        <button class="tool gym-btn"><span>🏋️</span><b>Practice gym</b><small>Verbs, this & that, my & mine</small></button>
       </div>
       <section class="lessons"></section>
+      <div class="home-links">
+        ${isStandalone() ? '' : '<button class="link-btn app-btn">📲 Get the phone app</button>'}
+        <button class="link-btn move-btn">💾 Move my progress</button>
+      </div>
       <p class="foot-note">Turn your sound on. Tap 🔊 anywhere to hear the Spanish.</p>`;
+    const appBtn = app.querySelector('.app-btn');
+    if (appBtn) appBtn.addEventListener('click', openGetApp);
+    app.querySelector('.move-btn').addEventListener('click', openMoveProgress);
     const reviewBtn = app.querySelector('.review-card:not([disabled])');
     if (reviewBtn) reviewBtn.addEventListener('click', startReview);
     app.querySelector('.rules-btn').addEventListener('click', openRules);
@@ -188,19 +197,20 @@
     const list = app.querySelector('.lessons');
     LESSONS.forEach((L, i) => {
       const rec = save.lessons[L.id];
+      const isNew = !rec && !(save.opened || []).includes(L.id);
       const card = document.createElement('button');
       card.className = 'lesson' + (rec ? ' done' : '');
       card.innerHTML = `<span class="num">${rec ? '✓' : i + 1}</span>
-        <span class="info"><b>${L.title}</b><small>${L.subtitle} · ${L.minutes} min</small>
+        <span class="info"><b>${L.title}${isNew ? ' <span class="new-tag">NEW</span>' : ''}</b><small>${L.subtitle} · ${L.minutes} min</small>
         ${rec ? `<small class="best">Best: ${rec.right}/${rec.asked} first try${hasGame(L) ? ` · game ${rec.game} pts` : ''}</small>` : ''}</span>`;
       card.addEventListener('click', () => startLesson(L));
       list.appendChild(card);
     });
-    COMING_SOON.forEach((L, i) => {
-      list.insertAdjacentHTML('beforeend', `<button class="lesson locked" disabled>
-        <span class="num">${LESSONS.length + i + 1}</span>
-        <span class="info"><b>${L.title}</b><small>${L.subtitle} · coming soon</small></span></button>`);
-    });
+    list.insertAdjacentHTML('beforeend', `<div class="coming">
+      <b>📬 More lessons on the way</b>
+      <p>Your brother is building the next ones. New lessons show up right here with a <span class="new-tag">NEW</span> tag.</p>
+      <p class="small">Coming next: ${COMING_NEXT.join(' · ')}</p>
+      <p class="small">Until then: replay a lesson for a better score, or hit the 🏋️ Practice gym.</p></div>`);
   }
 
   function streakStrip(save) {
@@ -235,6 +245,7 @@
   let run = null;
 
   function startLesson(L) {
+    markOpened(L.id);
     run = { L, steps: L.steps.slice(), i: 0, retry: [], right: 0, asked: 0, warmRight: 0, warmAsked: 0, game: 0, toReview: new Set() };
     showStep();
   }
@@ -320,7 +331,7 @@
     if (!c) return null;
     // A missed race sentence comes back as a two-button question.
     const lower = c.f.toLowerCase();
-    let other = OTHER_FORM[lower] || (c.v === 'ser' ? 'está' : 'es');
+    let other = OTHER_FORM[lower] || (game.buttons ? game.buttons.find(b => b[0] !== c.v)[0] : c.v === 'ser' ? 'está' : 'es');
     if (c.f !== lower) other = other[0].toUpperCase() + other.slice(1);
     return {
       type: 'choice', reviewId: id, isReview: true,
@@ -603,10 +614,11 @@
     },
   };
 
-  // ---------- mini game: Ser or Estar? race ----------
+  // ---------- mini game: a two-button sorting race (SER / ESTAR, EL / LA, …) ----------
   let stopGame = () => {};
 
   function playSort(s, stage, foot) {
+    const [A, B] = s.buttons || [['ser', 'SER'], ['estar', 'ESTAR']];
     const deck = shuffle(s.pool);
     let idx = 0, pts = 0, streak = 0, waiting = false, over = false;
     const missed = [];
@@ -615,8 +627,8 @@
       <div class="game-top"><span class="pts">0</span><span class="streak"></span><div class="timer"><i></i></div></div>
       <div class="g-sentence"></div>
       <div class="g-tag"></div>`;
-    foot.innerHTML = `<div class="g-buttons"><button class="g-btn ser">SER</button><button class="g-btn estar">ESTAR</button></div>
-      <p class="g-keys">On a keyboard: ← for ser, → for estar</p>`;
+    foot.innerHTML = `<div class="g-buttons"><button class="g-btn a">${A[1]}</button><button class="g-btn b">${B[1]}</button></div>
+      <p class="g-keys">On a keyboard: ← for ${A[1]}, → for ${B[1]}</p>`;
     const sentEl = stage.querySelector('.g-sentence'), tagEl = stage.querySelector('.g-tag');
     const ptsEl = stage.querySelector('.pts'), streakEl = stage.querySelector('.streak');
     const timerEl = stage.querySelector('.timer i');
@@ -648,8 +660,8 @@
       setTimeout(() => { if (!over) show(); }, ok ? 650 : 1700);
     }
     function onKey(e) {
-      if (e.key === 'ArrowLeft' || e.key === 's') answer('ser');
-      if (e.key === 'ArrowRight' || e.key === 'e') answer('estar');
+      if (e.key === 'ArrowLeft') answer(A[0]);
+      if (e.key === 'ArrowRight') answer(B[0]);
     }
     // A plain interval, not animation frames: those pause when the app is in the background.
     function tick() {
@@ -680,41 +692,236 @@
     }
     stopGame = () => { over = true; clearInterval(timer); document.removeEventListener('keydown', onKey); };
 
-    foot.querySelector('.ser').addEventListener('click', () => answer('ser'));
-    foot.querySelector('.estar').addEventListener('click', () => answer('estar'));
+    foot.querySelector('.g-btn.a').addEventListener('click', () => answer(A[0]));
+    foot.querySelector('.g-btn.b').addEventListener('click', () => answer(B[0]));
     document.addEventListener('keydown', onKey);
     show();
   }
 
-  // ---------- verbs (data in conjugation.js) ----------
+  // ---------- verbs and little words (data in conjugation.js and words.js) ----------
   const CONJ = window.CONJ;
-  function formsOf(g, v) { return v[2] || g.endings.map(e => v[0].slice(0, -2) + e); }
+  const WORDS = window.WORDS;
+  CONJ.tenses.forEach(t => t.groups.forEach(g => { g.tense = t; }));
+  const PRESENT = CONJ.tenses[0];
+  const IR_FORMS = ['voy', 'vas', 'va', 'vamos', 'van'];
 
-  // The five forms of a verb. Regular endings are colored; one row can be highlighted.
-  function conjTable(g, v, highlight) {
-    const forms = formsOf(g, v);
-    return `<div class="conj">${CONJ.persons.map((p, i) => {
-      const html = g.endings ? `${v[0].slice(0, -2)}<em>${g.endings[i]}</em>` : forms[i];
-      return `<div class="conj-row${i === highlight ? ' hl' : ''}"><span class="p">${p.key}</span><b>${html}</b>${spk(`${p.show[0]} ${forms[i]}`)}</div>`;
-    }).join('')}</div>`;
+  function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+
+  // The five forms of a verb, with the part the rule adds wrapped in <em> so tables can color it.
+  function formHTML(g, v) {
+    if (v[2]) return v[2].slice();
+    if (g.goingTo) return IR_FORMS.map(f => `<em>${f} a</em> ${v[0]}`);
+    if (g.addToInfinitive) return g.addToInfinitive.map(e => `${v[0]}<em>${e}</em>`);
+    const end = g.endings || g.endingsBy[v[0].slice(-2)];
+    return end.map(e => `${v[0].slice(0, -2)}<em>${e}</em>`);
+  }
+  function formsOf(g, v) { return formHTML(g, v).map(h => h.replace(/<\/?em>/g, '')); }
+
+  // One line on how to build this form: the ending to add, or the irregular verb's tip.
+  function howTo(g, v, p, who) {
+    if (v[2]) return v[3];
+    if (g.goingTo) return `Going to: <b>${IR_FORMS[p]} a</b> + the whole verb.`;
+    if (g.addToInfinitive) return `Future: keep the whole verb and add <b>-${g.addToInfinitive[p]}</b>.`;
+    const type = v[0].slice(-2), end = (g.endings || g.endingsBy[type])[p];
+    return `-${type.toUpperCase()} verb${g.tense === PRESENT ? '' : `, ${g.tense.name}`}: for ${who}, drop -${type} and add <b>-${end}</b>.`;
   }
 
+  // Present form of a verb we list, for the "that's the present tense" wrong answer.
+  function presentForm(inf, p) {
+    for (const g of PRESENT.groups) {
+      const v = g.verbs.find(x => x[0] === inf);
+      if (v) return formsOf(g, v)[p];
+    }
+    return null;
+  }
+
+  function conjTable(g, v, highlight) {
+    const html = formHTML(g, v), forms = formsOf(g, v);
+    return `<div class="conj">${CONJ.persons.map((p, i) => `<div class="conj-row${i === highlight ? ' hl' : ''}">
+      <span class="p">${p.key}</span><b>${html[i]}</b>${spk(`${p.show[0]} ${forms[i]}`)}</div>`).join('')}</div>`;
+  }
+
+  // ---------- gym questions: each returns prompt, options, and the explanations ----------
+  function verbQuestion(g) {
+    const v = pick(g.verbs), p = Math.floor(Math.random() * 5);
+    const forms = formsOf(g, v), answer = forms[p];
+    const who = pick(CONJ.persons[p].show);
+    const cue = pick(g.tense.cues);
+    const lead = cue ? `${cue} ${who}` : who;
+    const trap = g.tense === PRESENT ? null : presentForm(v[0], p);
+    const others = shuffle([...new Set(forms)].filter(f => f !== answer));
+    const wrong = trap && !forms.includes(trap) ? [trap].concat(others.slice(0, 2)) : others.slice(0, 3);
+    const how = howTo(g, v, p, who);
+    return {
+      kicker: g.tense === PRESENT ? g.title : `${g.tense.title} · ${g.title}`,
+      prompt: `${cap(lead)} ___`,
+      hint: `<b>${v[0]}</b> · ${v[1]}${g.tense === PRESENT ? '' : ` · <span class="tense-tag">${g.tense.title}</span>`}`,
+      answer,
+      options: shuffle([answer].concat(wrong)),
+      why(chosen) {
+        if (chosen === trap && !forms.includes(chosen)) {
+          return `<b>${chosen}</b> is the present tense (now). <b>${cue}</b> is your clue: it needs the ${g.tense.name}: <b>${answer}</b>. ${how}`;
+        }
+        const owner = CONJ.persons[forms.indexOf(chosen)].key;
+        return `<b>${chosen}</b> is the <b>${owner}</b> form. For <b>${who}</b> it's <b>${answer}</b>. ${how}`;
+      },
+      explain: how,
+      table: conjTable(g, v, p),
+      say: `${lead} ${answer}`,
+    };
+  }
+
+  const KIND = ['one boy word', 'one girl word', 'more than one boy word', 'more than one girl word'];
+  const ARTICLE = ['el', 'la', 'los', 'las'];
+  const ENDS = ['o', 'a', 'os', 'as'];
+  function nounKind(n, plural) { return (n[2] === 'm' ? 0 : 1) + (plural ? 2 : 0); }
+  function agree(base, k) { return base.slice(0, -1) + ENDS[k]; } // mío → mía / míos / mías
+
+  function demoTable(hid, hk) {
+    return `<div class="conj">${WORDS.demonstratives.map(d => `<div class="conj-row${d.id === hid ? ' hl' : ''}">
+      <span class="p">${d.en[0].replace(' …', '')}</span>
+      <b>${d.forms.map((f, i) => d.id === hid && i === hk ? `<em>${f}</em>` : f).join(' · ')}</b>${spk(d.forms.join(', '))}</div>`).join('')}</div>`;
+  }
+
+  function demoQuestion() {
+    const D = WORDS.demonstratives, d = pick(D);
+    if (Math.random() < 0.15) {
+      // No noun: esto / eso / aquello.
+      const answer = d.neuter;
+      const other = pick(D.filter(x => x !== d));
+      return {
+        kicker: 'This & that', prompt: '¿Qué es ___?', hint: `"What is ${d.neuterEn}?" You don't know what it is yet.`,
+        answer, options: shuffle([answer, d.forms[0], d.forms[1], other.neuter]),
+        why: chosen => chosen === other.neuter
+          ? `<b>${chosen}</b> means "${other.neuterEn}". For "${d.neuterEn}" use <b>${answer}</b>.`
+          : WORDS.neuterRule,
+        explain: WORDS.neuterRule,
+        table: demoTable(d.id, -1),
+        say: `¿Qué es ${answer}?`,
+      };
+    }
+    const n = pick(WORDS.nouns), plural = Math.random() < 0.4, k = nounKind(n, plural);
+    const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
+    const label = d.en[plural ? 1 : 0];
+    const en = label.includes('…') ? label.replace('…', nEn) : `${label} ${nEn}`;
+    const answer = d.forms[k];
+    const other = pick(D.filter(x => x !== d));
+    const wrong = shuffle(d.forms.filter((f, i) => i !== k)).slice(0, 2).concat(other.forms[k]);
+    const note = n[5] ? ` ${n[5]}` : '';
+    return {
+      kicker: 'This & that', prompt: `___ ${noun}`, hint: `"${en}"`,
+      answer, options: shuffle([answer].concat(wrong)),
+      why(chosen) {
+        const owner = D.find(x => x.forms.includes(chosen)), ci = owner.forms.indexOf(chosen);
+        if (owner !== d) {
+          return `<b>${chosen}</b> means "${owner.en[ci > 1 ? 1 : 0].replace(' …', '')}". For "${en}" it's <b>${answer} ${noun}</b>. ${WORDS.demoTrick}`;
+        }
+        return `<b>${chosen}</b> is for ${KIND[ci]}. <b>${noun}</b> is ${KIND[k]} (${ARTICLE[k]} ${noun}), so: <b>${answer} ${noun}</b>.${note}`;
+      },
+      explain: `${cap(ARTICLE[k])} ${noun} is ${KIND[k]}, so <b>${answer}</b>.${note}`,
+      table: demoTable(d.id, k),
+      say: `${answer} ${noun}`,
+    };
+  }
+
+  function shortPoss(o, k) { return o.short ? o.short[k > 1 ? 1 : 0] : agree(o.long, k); }
+  function possTable(hl) {
+    const rows = [['yo', 'mi', 'mío'], ['tú', 'tu', 'tuyo'], ['él / ella / usted / ellos', 'su', 'suyo'], ['nosotros', null, 'nuestro']];
+    return `<div class="conj">${rows.map(([who, s, l]) => `<div class="conj-row${l === hl ? ' hl' : ''}">
+      <span class="p">${who}</span>
+      <span class="forms"><b>${s ? `${s}, ${s}s` : [0, 1, 2, 3].map(i => agree(l, i)).join(', ')}</b>
+      <small>${s ? `long: ${[0, 1, 2, 3].map(i => agree(l, i)).join(', ')}` : 'same before a noun and after es'}</small></span></div>`).join('')}</div>`;
+  }
+
+  function possQuestion() {
+    const P = WORDS.possessives, o = pick(P), n = pick(WORDS.nouns);
+    const plural = Math.random() < 0.4, k = nounKind(n, plural);
+    const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
+    const long = Math.random() < 0.4;
+    const isSu = o.long === 'suyo';
+    const suNote = isSu ? ' <b>Su</b> can mean his, her, their or your (polite).' : '';
+    let answer, prompt, hint, pool, explain;
+    if (!long) {
+      answer = shortPoss(o, k);
+      prompt = `___ ${noun}`;
+      hint = `"${o.en} ${nEn}"`;
+      // Wrong number (or gender, for nuestro) first, then other owners.
+      pool = (o.short ? [shortPoss(o, k ^ 2)] : [agree(o.long, k ^ 1), agree(o.long, k ^ 2)])
+        .concat(shuffle(P.filter(x => x.long !== o.long)).map(x => shortPoss(x, k)));
+      explain = o.short
+        ? `"${o.en}" is <b>${o.short[0]}</b>, or <b>${o.short[1]}</b> for more than one thing. ${noun}: ${plural ? 'more than one' : 'just one'}.${suNote}`
+        : `<b>Nuestro</b> matches the thing: ${ARTICLE[k]} ${noun} → <b>${answer} ${noun}</b>.`;
+    } else {
+      answer = agree(o.long, k);
+      prompt = `${cap(ARTICLE[k])} ${noun} ${plural ? 'son' : 'es'} ___.`;
+      hint = `"The ${nEn} ${plural ? 'are' : 'is'} ${o.enLong}."`;
+      pool = [agree(o.long, k ^ 1), agree(o.long, k ^ 2), shortPoss(o, k)]
+        .concat(shuffle(P.filter(x => x.long !== o.long)).map(x => agree(x.long, k)));
+      explain = `After <b>es / son</b>, use the long form. It matches the thing: ${ARTICLE[k]} ${noun} → <b>${answer}</b>.${suNote}`;
+    }
+    const wrong = [...new Set(pool)].filter(f => f !== answer).slice(0, 3);
+    const enOf = x => x.long === 'suyo' ? (long ? 'his / hers / theirs / yours' : 'his / her / their / your') : (long ? x.enLong : x.en);
+    return {
+      kicker: 'My & mine', prompt, hint, answer,
+      options: shuffle([answer].concat(wrong)),
+      why(chosen) {
+        if (long && P.some(x => x.short && x.short.includes(chosen))) {
+          return `<b>${chosen}</b> only goes right before a noun, like <b>${chosen} ${noun}</b>. ${WORDS.possLongRule}`;
+        }
+        const whose = P.find(x => (x.short && x.short.includes(chosen)) || [0, 1, 2, 3].some(i => agree(x.long, i) === chosen));
+        if (whose && whose.long !== o.long) {
+          return `<b>${chosen}</b> means "${enOf(whose)}". You need "${long ? o.enLong : o.en}": <b>${answer}</b>.`;
+        }
+        return `<b>${chosen}</b> doesn't match the thing. <b>${noun}</b> is ${KIND[k]} (${ARTICLE[k]} ${noun}), so: <b>${answer}</b>.${n[5] ? ` ${n[5]}` : ''}`;
+      },
+      explain,
+      table: possTable(o.long),
+      say: long ? prompt.replace('___', answer) : `${answer} ${noun}`,
+    };
+  }
+
+  // Every drill the gym can run. Past and future tenses mix their regular and irregular groups.
+  const DRILLS = [];
+  PRESENT.groups.forEach(g => DRILLS.push({ id: g.id, section: 'Verbs: present', title: g.title, make: () => verbQuestion(g) }));
+  CONJ.tenses.slice(1).forEach(t => DRILLS.push({ id: t.id, section: 'Verbs: past & future', title: t.title, make: () => verbQuestion(pick(t.groups)) }));
+  DRILLS.push({ id: 'demo', section: 'Little words', title: 'This & that', make: demoQuestion });
+  DRILLS.push({ id: 'poss', section: 'Little words', title: 'My & mine', make: possQuestion });
+
   // ---------- Rules: every rule and memory trick, open from anywhere ----------
+  function groupRules(g, withHead) {
+    const irregular = !!g.verbs[0][2];
+    let body;
+    if (irregular) {
+      body = g.verbs.map(v => `<p class="verb-head"><b>${v[0]}</b> · ${v[1]}</p>${conjTable(g, v)}<p class="small">${v[3]}</p>`).join('');
+    } else {
+      const examples = g.endingsBy ? ['ar', 'er'].map(t => g.verbs.find(v => v[0].endsWith(t))) : [g.verbs[0]];
+      body = examples.map(v => `<p class="verb-head">Example: <b>${v[0]}</b> · ${v[1]}</p>${conjTable(g, v)}`).join('') +
+        `<p class="small">Works the same for: ${g.verbs.filter(v => !examples.includes(v)).map(v => `<b>${v[0]}</b> (${v[1]})`).join(', ')}</p>`;
+    }
+    return `${withHead ? `<h3 class="group-head">${g.title}</h3>` : ''}<p>${g.rule}</p>
+      ${g.trick ? `<div class="trick">💡 ${g.trick}</div>` : ''}${body}`;
+  }
+
   function openRules() {
     closeRules();
     const ov = document.createElement('div');
     ov.className = 'overlay';
     ov.innerHTML = `<div class="overlay-in">
       <div class="ov-top"><h2>📖 Rules</h2><button class="quit" aria-label="Close">✕</button></div>
-      <p class="kicker">Verbs: present tense</p>
-      ${CONJ.groups.map(g => `<details><summary>${g.title}</summary><div class="details-in">
-        <p>${g.rule}</p>
-        ${g.trick ? `<div class="trick">💡 ${g.trick}</div>` : ''}
-        ${g.endings
-          ? `<p class="verb-head">Example: <b>${g.verbs[0][0]}</b> · ${g.verbs[0][1]}</p>${conjTable(g, g.verbs[0])}
-             <p class="small">Works the same for: ${g.verbs.slice(1).map(v => `<b>${v[0]}</b> (${v[1]})`).join(', ')}</p>`
-          : g.verbs.map(v => `<p class="verb-head"><b>${v[0]}</b> · ${v[1]}</p>${conjTable(g, v)}<p class="small">${v[3]}</p>`).join('')}
-      </div></details>`).join('')}
+      <p class="kicker">Verbs: present</p>
+      ${PRESENT.groups.map(g => `<details><summary>${g.title}</summary><div class="details-in">${groupRules(g, false)}</div></details>`).join('')}
+      <p class="kicker">Verbs: past & future</p>
+      ${CONJ.tenses.slice(1).map(t => `<details><summary>${t.title}</summary><div class="details-in">
+        <p>${t.about}</p>${t.trick ? `<div class="trick">💡 ${t.trick}</div>` : ''}
+        ${t.groups.map(g => groupRules(g, t.groups.length > 1)).join('')}</div></details>`).join('')}
+      <p class="kicker">Little words</p>
+      <details><summary>This & that</summary><div class="details-in">
+        <p>${WORDS.demoRule}</p><div class="trick">💡 ${WORDS.demoTrick}</div>
+        <p class="small">Order: one boy word · one girl word · boy words · girl words</p>
+        ${demoTable(null, -1)}<p>${WORDS.neuterRule}</p></div></details>
+      <details><summary>My & mine</summary><div class="details-in">
+        <p>${WORDS.possRule}</p><p>${WORDS.possLongRule}</p>${possTable(null)}
+        <div class="trick">💡 ${WORDS.possTrick}</div></div></details>
       <p class="kicker">From your lessons</p>
       ${LESSONS.map(L => {
         const cards = L.steps.filter(s => s.type === 'teach');
@@ -733,7 +940,7 @@
     document.body.classList.remove('locked');
   }
 
-  // ---------- Verb gym: endless conjugation practice ----------
+  // ---------- Practice gym: endless drills, open any time ----------
   let gym = null;
 
   function gymTop(title) {
@@ -747,64 +954,62 @@
 
   function showGymSetup() {
     if ('speechSynthesis' in window) speechSynthesis.cancel();
-    app.innerHTML = `${gymTop('Verb gym')}
+    const on = loadSave().gym || ['ar', 'er', 'ir', 'irr'];
+    const sections = [...new Set(DRILLS.map(d => d.section))];
+    app.innerHTML = `${gymTop('Practice gym')}
       <div class="stage">
         <div class="big-emoji">🏋️</div>
-        <h2 class="center">Verb gym</h2>
-        <p class="center">Practice as long as you want. Pick which verbs to train.</p>
-        <div class="chips">${CONJ.groups.map(g => `<button class="chip on" data-g="${g.id}">${g.title}</button>`).join('')}</div>
+        <h2 class="center">Practice gym</h2>
+        <p class="center">Practice as long as you want. Pick what to train.</p>
+        ${sections.map(sec => `<p class="kicker center chip-head">${sec}</p>
+          <div class="chips">${DRILLS.filter(d => d.section === sec).map(d =>
+            `<button class="chip${on.includes(d.id) ? ' on' : ''}" data-d="${d.id}">${d.title}</button>`).join('')}</div>`).join('')}
         <p class="center small">Stuck? Tap 📖 at the top for the rules.</p>
       </div>
       <div class="foot"><button class="btn">Start</button></div>`;
     wireTop();
     const chips = [...app.querySelectorAll('.chip')];
     const start = app.querySelector('.foot .btn');
+    const picked = () => chips.filter(c => c.classList.contains('on')).map(c => c.dataset.d);
+    start.disabled = !picked().length;
     chips.forEach(c => c.addEventListener('click', () => {
       c.classList.toggle('on');
-      start.disabled = !chips.some(x => x.classList.contains('on'));
+      start.disabled = !picked().length;
     }));
     start.addEventListener('click', () => {
-      const on = chips.filter(c => c.classList.contains('on')).map(c => c.dataset.g);
-      gym = { groups: CONJ.groups.filter(g => on.includes(g.id)), right: 0, asked: 0, streak: 0, counted: false };
+      const ids = picked();
+      const save = loadSave();
+      save.gym = ids;
+      writeSave(save);
+      gym = { drills: DRILLS.filter(d => ids.includes(d.id)), right: 0, asked: 0, streak: 0, counted: false };
       gymQuestion();
     });
   }
 
   function gymQuestion() {
-    const g = pick(gym.groups), v = pick(g.verbs), p = Math.floor(Math.random() * 5);
-    const forms = formsOf(g, v), answer = forms[p];
-    const who = pick(CONJ.persons[p].show);
-    const opts = shuffle([answer].concat(shuffle([...new Set(forms)].filter(f => f !== answer)).slice(0, 3)));
+    const q = pick(gym.drills).make();
     app.innerHTML = `${gymTop(`✓ ${gym.right}${gym.streak >= 3 ? ` · 🔥 ${gym.streak}` : ''}`)}
       <div class="stage">
-        <p class="kicker">${g.title}</p>
-        <h2 class="prompt">${who[0].toUpperCase() + who.slice(1)} ${blank('___')}</h2>
-        <p class="hint"><b>${v[0]}</b> · ${v[1]}</p>
-        <div class="options grid2">${opts.map((o, k) => `<button class="opt" data-k="${k}">${o}</button>`).join('')}</div>
+        <p class="kicker">${q.kicker}</p>
+        <h2 class="prompt">${blank(q.prompt)}</h2>
+        <p class="hint">${q.hint}</p>
+        <div class="options grid2">${q.options.map((o, k) => `<button class="opt" data-k="${k}">${o}</button>`).join('')}</div>
       </div>
       <div class="foot"></div>`;
     wireTop();
     const stage = app.querySelector('.stage'), foot = app.querySelector('.foot');
     stage.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
-      const chosen = opts[+b.dataset.k];
-      const ok = chosen === answer;
+      const chosen = q.options[+b.dataset.k];
+      const ok = chosen === q.answer;
       stage.querySelectorAll('.opt').forEach(x => {
         x.disabled = true;
-        if (opts[+x.dataset.k] === answer) x.classList.add('right');
+        if (q.options[+x.dataset.k] === q.answer) x.classList.add('right');
         else if (x !== b) x.classList.add('dim');
       });
       if (!ok) b.classList.add('wrong');
-      stage.querySelector('.prompt').innerHTML = `${who[0].toUpperCase() + who.slice(1)} ${blank('___', answer)}`;
+      stage.querySelector('.prompt').innerHTML = blank(q.prompt, q.answer);
       gym.asked++;
       if (ok) { gym.right++; gym.streak++; } else gym.streak = 0;
-
-      // Why: name whose form he picked, then the ending or tip that gives the right one.
-      const how = g.endings ? `${g.title}: for ${who}, drop -${g.ending} and add <b>-${g.endings[p]}</b>.` : v[3];
-      let why = how;
-      if (!ok) {
-        const owner = CONJ.persons[forms.indexOf(chosen)].key;
-        why = `<b>${chosen}</b> is the <b>${owner}</b> form. For <b>${who}</b> it's <b>${answer}</b>. ${how}`;
-      }
       let bonus = '';
       if (gym.asked >= 10 && !gym.counted) {
         gym.counted = true;
@@ -813,11 +1018,11 @@
       }
       ok ? sfx.good() : sfx.bad();
       foot.innerHTML = `<div class="sheet ${ok ? 'good' : 'bad'}">
-        <h3>${ok ? pick(PRAISE) : 'Not quite'}</h3><p>${why}</p>
-        ${conjTable(g, v, p)}${bonus}
+        <h3>${ok ? pick(PRAISE) : 'Not quite'}</h3><p>${ok ? q.explain : q.why(chosen)}</p>
+        ${q.table}${bonus}
         <div class="sheet-row"><button class="btn">Next</button></div></div>`;
       foot.querySelector('.btn').addEventListener('click', gymQuestion);
-      setTimeout(() => say(`${who} ${answer}`), ok ? 300 : 500);
+      setTimeout(() => say(q.say), ok ? 300 : 500);
     }));
   }
 
@@ -885,5 +1090,113 @@
     window.scrollTo(0, 0);
   }
 
+  // ---------- phone app: install, and moving progress between copies ----------
+  // Where the installable copy lives. Set once it's hosted; the itch copy links to it.
+  const APP_URL = 'https://allenjjensen.github.io/vamos-andrew/';
+  const inFrame = window.top !== window;
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  }
+
+  function openPage(title, html) {
+    closeRules();
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML = `<div class="overlay-in"><div class="ov-top"><h2>${title}</h2><button class="quit" aria-label="Close">✕</button></div>${html}</div>`;
+    ov.querySelector('.quit').addEventListener('click', closeRules);
+    document.body.appendChild(ov);
+    document.body.classList.add('locked');
+    return ov;
+  }
+
+  // Progress as a code: the save, as URL-safe base64 text.
+  function progressCode() {
+    const json = JSON.stringify(loadSave());
+    return btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function readCode(code) {
+    try {
+      const b64 = code.trim().replace(/-/g, '+').replace(/_/g, '/');
+      const data = JSON.parse(decodeURIComponent(escape(atob(b64))));
+      return data && typeof data.lessons === 'object' ? data : null;
+    } catch (e) { return null; }
+  }
+
+  function openGetApp() {
+    const iPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    let html;
+    if (inFrame) {
+      html = APP_URL
+        ? `<p>The app has its own link. Open it, then add it to your home screen.</p>
+           <a class="btn link-as-btn" href="${APP_URL}#progress=${progressCode()}" target="_blank" rel="noopener">Open the app (brings your progress)</a>`
+        : '<p>The phone app is almost ready. Your brother will send you the link.</p>';
+    } else {
+      html = `<p>Put ¡Vamos! on your home screen. It opens full screen like any app, and works without internet.</p>
+        ${installPrompt ? '<button class="btn install-now">📲 Install ¡Vamos!</button>' : ''}
+        <div class="trick">${iPhone
+          ? '<b>iPhone:</b> open this page in <b>Safari</b>, tap the <b>Share</b> button (the square with the arrow ⬆️), then <b>Add to Home Screen</b>.'
+          : '<b>Android:</b> in Chrome, tap the <b>⋮</b> menu (top right), then <b>Install app</b> or <b>Add to Home screen</b>.'}</div>
+        <p class="small">${iPhone ? 'On Android: Chrome ⋮ menu → Install app.' : 'On iPhone: Safari → Share ⬆️ → Add to Home Screen.'}</p>`;
+    }
+    const ov = openPage('📲 Get the app', html);
+    const btn = ov.querySelector('.install-now');
+    if (btn) btn.addEventListener('click', async () => {
+      installPrompt.prompt();
+      await installPrompt.userChoice;
+      installPrompt = null;
+      closeRules();
+    });
+  }
+
+  function openMoveProgress() {
+    const code = progressCode();
+    const ov = openPage('💾 Move my progress', `
+      <p>Moving to a new phone, or from the itch page to the app? Copy your progress code here, then paste it there.</p>
+      <button class="btn copy-code">Copy my progress code</button>
+      <p class="small copied" hidden>Copied! Now open the other copy and paste it below.</p>
+      <p class="kicker" style="margin-top:22px">Paste a code</p>
+      <textarea class="code-box" rows="4" placeholder="Paste your progress code here"></textarea>
+      <button class="btn load-code">Load this progress</button>
+      <p class="small load-msg"></p>`);
+    ov.querySelector('.copy-code').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(code); }
+      catch (e) {
+        const box = ov.querySelector('.code-box');
+        box.value = code;
+        box.select();
+        document.execCommand('copy');
+      }
+      ov.querySelector('.copied').hidden = false;
+    });
+    ov.querySelector('.load-code').addEventListener('click', () => {
+      const data = readCode(ov.querySelector('.code-box').value);
+      if (!data) { ov.querySelector('.load-msg').textContent = "That code didn't work. Copy the whole thing and try again."; return; }
+      if (!confirm('Load this progress? It replaces the progress on this phone.')) return;
+      writeSave(data);
+      closeRules();
+      showHome();
+    });
+  }
+
+  // A link like ...#progress=CODE brings progress along (from the itch page's "Open the app").
+  function importFromLink() {
+    const m = location.hash.match(/^#progress=(.+)$/);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    const data = readCode(m[1]);
+    if (!data) return;
+    const here = loadSave();
+    const hasProgress = Object.keys(here.lessons || {}).length > 0;
+    if (!hasProgress || confirm('Bring over your progress from the other copy? It replaces the progress here.')) writeSave(data);
+  }
+
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !inFrame) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* still works online */ });
+  }
+
+  importFromLink();
   showHome();
 })();

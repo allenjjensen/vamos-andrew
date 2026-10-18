@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- App icon, drawn at 512x512. Content stays in the middle 70% so phones can crop it to a circle
+     or rounded square ("maskable"). Rendered by itch/render-cover.ps1 into icons/. -->
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@900&display=block" rel="stylesheet">
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 512px; height: 512px; overflow: hidden; }
+  body { background: #e2725b; position: relative; font-family: Nunito, sans-serif; }
+  .glow { position: absolute; width: 420px; height: 420px; border-radius: 50%; left: 46px; top: 46px; background: #ea8b76; }
+  .bubble {
+    position: absolute; left: 106px; top: 116px; width: 300px; height: 230px;
+    background: #fff8f1; border-radius: 70px;
+    display: grid; place-items: center;
+    box-shadow: 0 14px 0 #c45a44;
+  }
+  .bubble::after {
+    content: ''; position: absolute; left: 70px; bottom: -48px;
+    border: 30px solid transparent; border-top: 40px solid #fff8f1; border-left: 12px solid transparent;
+  }
+  .txt { font-size: 150px; font-weight: 900; color: #e2725b; letter-spacing: -6px; line-height: 1; margin-top: -10px; }
+  .dot { position: absolute; right: 120px; top: 92px; width: 70px; height: 70px; border-radius: 50%; background: #1f8a8a; border: 10px solid #e2725b; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="bubble"><span class="txt">¡V!</span></div>
+  <div class="dot"></div>
+</body>
+</html>

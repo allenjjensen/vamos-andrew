@@ -295,8 +295,8 @@ h3 { font-weight: 900; }
   font-size: 1.5rem;
   letter-spacing: .04em;
 }
-.g-btn.ser { background: var(--teal); box-shadow: 0 5px 0 var(--teal-dark); }
-.g-btn.estar { background: var(--brand); box-shadow: 0 5px 0 var(--brand-dark); }
+.g-btn.a { background: var(--teal); box-shadow: 0 5px 0 var(--teal-dark); }
+.g-btn.b { background: var(--brand); box-shadow: 0 5px 0 var(--brand-dark); }
 .g-btn:active { transform: translateY(3px); box-shadow: none; }
 .g-keys { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 10px; }
 
@@ -390,6 +390,31 @@ details[open] summary::after { content: '▾'; }
 .chip.on { border-color: var(--teal); background: var(--teal); color: #fff; }
 .options.grid2 { grid-template-columns: 1fr 1fr; }
 .options.grid2 .opt { text-align: center; }
+
+/* ---------- new lessons, coming soon ---------- */
+.new-tag {
+  display: inline-block; vertical-align: middle; background: var(--gold, #f2b134); color: #3a2a00;
+  font-size: .62rem; font-weight: 900; letter-spacing: .08em; padding: 2px 6px; border-radius: 6px; margin-left: 4px;
+}
+.coming { border: 2px dashed var(--line); border-radius: 18px; padding: 14px 16px; line-height: 1.45; }
+.coming p { margin: 6px 0 0; }
+
+/* ---------- gym extras ---------- */
+.chip-head { margin-top: 14px; }
+.chips { margin: 6px 0 4px; }
+.tense-tag { background: var(--trick-bg); border-radius: 6px; padding: 1px 6px; font-weight: 700; font-size: .85rem; }
+.conj-row .forms { flex: 1; display: flex; flex-direction: column; }
+.conj-row .forms small { color: var(--muted); font-size: .78rem; }
+.group-head { margin: 18px 0 4px; font-size: 1.1rem; }
+
+/* ---------- app install and progress ---------- */
+.home-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin-top: 20px; }
+.link-btn { color: var(--teal); font-weight: 800; font-size: .92rem; padding: 6px 2px; }
+.link-as-btn { text-align: center; text-decoration: none; line-height: 54px; }
+.code-box {
+  width: 100%; font: inherit; font-size: .8rem; color: var(--ink); background: var(--card);
+  border: 2px solid var(--line); border-radius: 14px; padding: 10px; resize: vertical; word-break: break-all;
+}
 
 /* ---------- done ---------- */
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0; }
