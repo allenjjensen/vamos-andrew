@@ -621,16 +621,21 @@
   }
 
   // ---------- the player: a chunk in one language, then the same chunk in the other ----------
+  // Chunk lengths are book time (where the audio is), so they stay the same at any speed.
   const SIZES = [
     ['sentence', 'One sentence', 5], ['few', 'A few sentences', 12], ['para', 'A paragraph', 25],
-    ['s30', 'About 30 seconds', 30], ['m1', 'About 1 minute', 60], ['m2', 'About 2 minutes', 120],
+    ['s30', 'About 30 seconds', 30], ['m1', 'About 1 minute', 60],
+    ...[2, 3, 4, 5, 6, 7, 8, 9, 10].map(m => [`m${m}`, `About ${m} minutes`, m * 60]),
   ];
   const ORDERS = [
     ['en-es', 'English, then Spanish'], ['es-en-es', 'Spanish, English, Spanish again'],
     ['es-en', 'Spanish, then English'], ['es', 'Spanish only'],
   ];
-  const SPEEDS = [['1', 'Normal'], ['0.85', 'A bit slower'], ['0.75', 'Slower']];
-  function settings() { return Object.assign({ size: 's30', order: 'en-es', speed: '1' }, loadState().settings); }
+  const SPEEDS = ['0.5', '0.6', '0.7', '0.75', '0.8', '0.85', '0.9', '1', '1.1', '1.2', '1.25', '1.3', '1.4', '1.5', '1.75', '2', '2.25', '2.5', '2.75', '3']
+    .map(v => [v, v === '1' ? '1x (normal)' : `${v}x`]);
+  const LABELS = { size: 'Switch languages every', order: 'Play order', speedEn: 'English speed', speed: 'Spanish speed' };
+  function settings() { return Object.assign({ size: 's30', order: 'en-es', speed: '1', speedEn: '1' }, loadState().settings); }
+  function rateOf(lang) { const st = settings(); return +(lang === 'es' ? st.speed : st.speedEn) || 1; }
   function setSetting(k, v) {
     const s = loadState();
     s.settings = Object.assign({}, s.settings, { [k]: v });
@@ -649,13 +654,15 @@
   // The next chunk from (d0, f0): it ends at a pause near the chosen length, preferring
   // pauses that were paired with the other book, so both halves end at the same place.
   function nextChunk(al, d0, f0, size) {
-    const T = SIZES.find(s => s[0] === size)[2];
-    if (al.dE - d0 <= T * 1.6) return { d0, f0, d1: al.dE, f1: al.fE, last: true };
+    const T = (SIZES.find(s => s[0] === size) || SIZES[3])[2];
+    // short chunks can stretch a lot to find a good pause; long ones stay close to the length asked for
+    const lo = T < 60 ? 0.6 : 0.85, hi = T < 60 ? 1.7 : 1.2;
+    if (al.dE - d0 <= T * (T < 60 ? 1.6 : 1.3)) return { d0, f0, d1: al.dE, f1: al.fE, last: true };
     let best = null;
     for (const p of al.a) {
       const len = p.t - d0;
-      if (len < T * 0.6) continue;
-      if (len > T * 1.7) break;
+      if (len < T * lo) continue;
+      if (len > T * hi) break;
       const s = Math.min(p.len, 2) * (size === 'para' ? 2 : 1) + (p.f != null ? 1 : 0) - 1.5 * Math.abs(len - T) / T;
       if (!best || s > best.s) best = { p, s };
     }
@@ -685,10 +692,11 @@
     const partEnd = part.offset + part.duration;
     const end = Math.min(to, partEnd) - part.offset;
     const url = urlOf(part);
-    const rate = lang === 'es' ? +settings().speed : 1;
+    const rate = rateOf(lang);
+    P.now = () => part.offset + el.currentTime; // where this language is right now, in book time
     const watch = () => {
       if (!P || token !== P.token) return;
-      const left = (end - el.currentTime) / rate;
+      const left = (end - el.currentTime) / (el.playbackRate || 1);
       if (left <= 0.03 || el.ended) {
         el.pause();
         if (to > partEnd + 0.05) playSegment(lang, partEnd, to, token, done);
@@ -712,15 +720,21 @@
     const st = bookState();
     return i > 0 && st.anchors[i] == null && !st.skipped[i];
   }
+  // Saves the spot: the chunk, which language of it, and how far into that language.
   function savePos() {
     if (!P) return;
-    const c = P.chunk;
-    updateBook(b => { b.pos = { i: P.i, d: c.d0, f: c.f0 }; });
+    const c = P.chunk, s = P.seq[P.step];
+    const pos = { i: P.i, d: c.d0, f: c.f0, step: P.step };
+    if (P.playing && s && P.now) pos.t = P.now();
+    else if (P.resume) Object.assign(pos, { step: P.resume.step, t: P.resume.t });
+    updateBook(b => { b.pos = pos; });
   }
+  setInterval(() => { if (P && P.playing) savePos(); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
 
-  // Opens the player at section i (at driver time d if given), first asking for the
-  // chapter match if it's missing.
-  async function openPlayer(i, d, autoplay) {
+  // Opens the player at section i (at driver time d if given, or a saved spot), first asking
+  // for the chapter match if it's missing.
+  async function openPlayer(i, d, autoplay, spot) {
     if (i >= pair.sections.length) return showFinished();
     if (needsMatch(i)) return showFinder(i, 0, () => openPlayer(i, null, autoplay));
     const s = pair.sections[i];
@@ -737,18 +751,29 @@
       return;
     }
     const startD = d != null && d > al.dS + 0.5 && d < al.dE - 0.5 ? d : al.dS;
-    const startF = startD === al.dS ? al.fS : snapTo(al.b, mapThrough(al.points, startD), 1.5);
-    P = { i, al, token: 0, timer: 0, playing: false, step: 0, seq: [], n: 1, history: [], lastBack: 0 };
+    const startF = startD === al.dS ? al.fS : spot && spot.f != null ? spot.f : snapTo(al.b, mapThrough(al.points, startD), 1.5);
+    P = { i, al, token: 0, timer: 0, playing: false, step: 0, seq: [], n: 1, history: [], lastBack: 0, extra: -1 };
     P.chunk = nextChunk(al, startD, startF, settings().size);
+    // back where he left off: the same chunk, the same language, the same second
+    if (spot && spot.step != null) {
+      P.seq = seqFor(P.chunk);
+      const s = P.seq[spot.step];
+      if (s) {
+        P.step = spot.step;
+        if (spot.t != null && spot.t > s.range[0] + 1 && spot.t < s.range[1] - 1) P.resume = { step: spot.step, t: spot.t };
+      }
+    }
     drawPlayer();
     if (i + 1 < pair.sections.length && !needsMatch(i + 1)) alignSection(i + 1).catch(() => {}); // get the next one ready
-    if (autoplay) runChunk(0); else savePos();
+    if (autoplay) runChunk(P.step, true); else savePos();
   }
 
-  function runChunk(fromStep) {
+  function seqFor(chunk) { return settings().order.split('-').map(lang => ({ lang, range: rangeOf(chunk, lang) })); }
+  // Plays the current chunk from one of its steps. keepSeq keeps the order already set for this chunk.
+  function runChunk(fromStep, keepSeq) {
     stopPlayer();
     const token = P.token;
-    P.seq = settings().order.split('-').map(lang => ({ lang, range: rangeOf(P.chunk, lang) }));
+    if (!keepSeq || !P.seq.length) { P.seq = seqFor(P.chunk); P.extra = -1; P.resume = null; }
     P.step = fromStep || 0;
     P.playing = true;
     savePos();
@@ -759,7 +784,9 @@
     const s = P.seq[P.step];
     if (!s) return advance();
     drawNow();
-    playSegment(s.lang, s.range[0], s.range[1], token, () => {
+    const from = P.resume && P.resume.step === P.step ? P.resume.t : s.range[0];
+    P.resume = null;
+    playSegment(s.lang, from, s.range[1], token, () => {
       P.step++;
       P.timer = setTimeout(() => playStep(token), 450);
     });
@@ -775,7 +802,7 @@
 
   function drawPlayer() {
     const st = settings();
-    const select = (key, list) => `<label>${{ size: 'Chunk size', order: 'Play order', speed: 'Spanish speed' }[key]}
+    const select = (key, list) => `<label>${LABELS[key]}
       <select data-k="${key}">${list.map(([v, label]) => `<option value="${v}"${st[key] === v ? ' selected' : ''}>${label}</option>`).join('')}</select></label>`;
     const stage = ctx.app.querySelector('.stage'), foot = ctx.app.querySelector('.foot');
     stage.innerHTML = `
@@ -795,10 +822,17 @@
         <div class="bk-nudge-row"><button class="bk-earlier">◀ Back a sentence</button><button class="bk-later">Ahead a sentence ▶</button></div>
         <p class="small center bk-nudge-msg"></p>
       </div>
-      <div class="bk-settings">${select('size', SIZES)}${select('order', ORDERS)}${select('speed', SPEEDS)}</div>`;
+      <div class="bk-settings">${select('size', SIZES)}${select('order', ORDERS)}${select('speedEn', SPEEDS)}${select('speed', SPEEDS)}
+        <p class="small center bk-set-msg"></p></div>`;
     foot.innerHTML = '';
     stage.querySelector('.bk-main').addEventListener('click', () => {
-      if (P.playing) { stopPlayer(); drawNow(); } else runChunk(P.step < P.seq.length ? P.step : 0);
+      if (P.playing) {
+        // pausing remembers the exact second, so play picks up right there
+        if (P.now) P.resume = { step: P.step, t: P.now() };
+        stopPlayer();
+        savePos();
+        drawNow();
+      } else runChunk(P.step < P.seq.length ? P.step : 0, true);
     });
     stage.querySelector('.bk-next').addEventListener('click', () => { stopPlayer(); advance(); });
     stage.querySelector('.bk-back').addEventListener('click', () => {
@@ -807,25 +841,67 @@
       P.lastBack = now;
       runChunk(0);
     });
-    stage.querySelector('.bk-again').addEventListener('click', () => {
-      const es = { lang: 'es', range: rangeOf(P.chunk, 'es') };
-      if (P.playing) P.seq.push(es);
-      else { P.seq = [es]; runChunkSeq(); }
-    });
+    stage.querySelector('.bk-again').addEventListener('click', spanishAgain);
     stage.querySelector('.bk-earlier').addEventListener('click', () => nudge(-1));
     stage.querySelector('.bk-later').addEventListener('click', () => nudge(1));
     stage.querySelectorAll('.bk-settings select').forEach(sel => sel.addEventListener('change', () => {
-      setSetting(sel.dataset.k, sel.value);
-      if (sel.dataset.k === 'speed') els.es.playbackRate = els.es.defaultPlaybackRate = +sel.value;
-      // new chunk size and order start with the next chunk
+      const k = sel.dataset.k, msg = stage.querySelector('.bk-set-msg');
+      setSetting(k, sel.value);
+      msg.textContent = '';
+      if (k === 'speed' || k === 'speedEn') {
+        const el = els[k === 'speed' ? 'es' : 'en'];
+        el.playbackRate = el.defaultPlaybackRate = +sel.value;
+      } else if (k === 'order') {
+        const fresh = seqFor(P.chunk), cur = P.seq[P.step];
+        P.extra = -1;
+        if (P.playing && !(cur && fresh[P.step] && fresh[P.step].lang === cur.lang)) { runChunk(0); return; }
+        if (!P.playing) P.resume = null;
+        P.seq = fresh;
+        if (!P.playing) P.step = 0;
+      } else if (k === 'size') {
+        if (P.playing) msg.textContent = 'The new length starts with the next chunk.';
+        else {
+          P.chunk = nextChunk(P.al, P.chunk.d0, P.chunk.f0, sel.value);
+          P.seq = seqFor(P.chunk);
+          P.step = 0;
+          P.extra = -1;
+          P.resume = null;
+          savePos();
+        }
+      }
+      drawNow();
     }));
     drawNow();
   }
-  function runChunkSeq() {
-    stopPlayer();
-    P.step = 0;
-    P.playing = true;
-    playStep(P.token);
+
+  // "Spanish again": adds one more Spanish play of this chunk (now if paused, next if playing).
+  // Tapping again takes it back out, or skips it if it's already playing.
+  function spanishAgain() {
+    if (!P.seq.length) P.seq = seqFor(P.chunk);
+    if (P.extra >= 0 && P.step <= P.extra) {
+      if (P.step < P.extra) { P.seq.splice(P.extra, 1); P.extra = -1; drawNow(); return; }
+      P.seq.splice(P.extra, 1); // playing it right now: skip it
+      P.extra = -1;
+      if (P.playing) runChunk(P.step, true); else drawNow();
+      return;
+    }
+    const es = { lang: 'es', range: rangeOf(P.chunk, 'es') };
+    if (P.playing) {
+      // right after the Spanish that's playing, or after this chunk's next Spanish
+      let at = P.step;
+      if (P.seq[at].lang !== 'es') {
+        const j = P.seq.findIndex((s, k) => k > at && s.lang === 'es');
+        at = j >= 0 ? j : P.seq.length - 1;
+      }
+      P.extra = at + 1;
+      P.seq.splice(P.extra, 0, es);
+      drawNow();
+    } else {
+      P.extra = P.step;
+      P.seq.splice(P.extra, 0, es);
+      P.resume = null;
+      runChunk(P.step, true);
+    }
   }
 
   function drawNow() {
@@ -834,7 +910,10 @@
     if (!stage || !stage.querySelector('.bk-seq')) return;
     const seq = P.seq.length ? P.seq : settings().order.split('-').map(lang => ({ lang }));
     stage.querySelector('.bk-seq').innerHTML = seq.map((s, k) =>
-      `<span class="l${P.playing && k === P.step ? ' on' : k < P.step ? ' done' : ''}">${s.lang.toUpperCase()}</span>`).join('<i>→</i>');
+      `<span class="l${P.playing && k === P.step ? ' on' : k < P.step ? ' done' : ''}${k === P.extra ? ' extra' : ''}">${s.lang.toUpperCase()}</span>`).join('<i>→</i>');
+    const again = stage.querySelector('.bk-again');
+    const queued = P.extra >= 0 && P.step <= P.extra;
+    again.textContent = !queued ? '🔁 Spanish again' : P.step === P.extra && P.playing ? '⏭ Skip the extra Spanish' : '✕ No extra Spanish';
     const al = P.al, c = P.chunk;
     stage.querySelector('.bk-where').textContent = `Chunk ${P.n} · ${fmt(c.d0 - al.dS)} of ${fmt(al.dE - al.dS)}`;
     stage.querySelector('.bk-bar i').style.width = `${Math.min(100, 100 * (c.d0 - al.dS) / Math.max(1, al.dE - al.dS))}%`;
@@ -918,9 +997,98 @@
     return screenId;
   }
 
-  function open(c) {
+  // ---------- keeping the book on the phone ----------
+  // The picked files are copied into the app's own storage, so the book is still there next time
+  // without picking the files again. One book at a time: picking new books replaces it.
+  let keeping = null; // { done, total } while copying
+  const canKeep = () => !!(navigator.storage && navigator.storage.getDirectory && window.FileSystemFileHandle
+    && FileSystemFileHandle.prototype.createWritable);
+  async function keepFiles(files) {
+    if (!canKeep()) return 'unsupported';
+    const total = files.en.concat(files.es).reduce((n, f) => n + f.size, 0);
+    try {
+      const est = await navigator.storage.estimate();
+      if (est.quota && est.quota - (est.usage || 0) < total * 1.05) return 'full';
+    } catch (e) { /* go ahead and try */ }
+    try { await navigator.storage.persist(); } catch (e) { /* the browser decides */ }
+    const s = loadState();
+    delete s.kept;
+    writeState(s);
+    keeping = { done: 0, total };
+    try {
+      const root = await navigator.storage.getDirectory();
+      try { await root.removeEntry('books', { recursive: true }); } catch (e) { /* nothing kept yet */ }
+      const dir = await root.getDirectoryHandle('books', { create: true });
+      for (const lang of ['en', 'es']) {
+        const ld = await dir.getDirectoryHandle(lang, { create: true });
+        for (const f of files[lang]) {
+          const w = await (await ld.getFileHandle(f.name, { create: true })).createWritable();
+          const reader = f.stream().getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await w.write(value);
+            keeping.done += value.length;
+            drawKeep();
+          }
+          await w.close();
+        }
+      }
+      const s2 = loadState();
+      s2.kept = { title: pair ? pair.title : '', files: { en: files.en.map(f => [f.name, f.size]), es: files.es.map(f => [f.name, f.size]) } };
+      writeState(s2);
+      return 'ok';
+    } catch (e) {
+      return 'failed';
+    } finally {
+      keeping = null;
+    }
+  }
+  // The kept files, or null if there's no complete kept book.
+  async function keptFiles() {
+    const kept = loadState().kept;
+    if (!kept || !canKeep()) return null;
+    try {
+      const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('books');
+      const out = {};
+      for (const lang of ['en', 'es']) {
+        const ld = await dir.getDirectoryHandle(lang);
+        out[lang] = [];
+        for (const [name, size] of kept.files[lang]) {
+          const f = await (await ld.getFileHandle(name)).getFile();
+          if (f.size !== size) return null;
+          out[lang].push(f);
+        }
+      }
+      return out;
+    } catch (e) { return null; }
+  }
+  async function forgetKept() {
+    const s = loadState();
+    delete s.kept;
+    writeState(s);
+    try { await (await navigator.storage.getDirectory()).removeEntry('books', { recursive: true }); } catch (e) { /* already gone */ }
+  }
+  // The line on the book screen that says how the saving is going.
+  let keepNote = '';
+  function drawKeep() {
+    const el = ctx && ctx.app.querySelector('.bk-keep');
+    if (!el) return;
+    if (keeping) el.textContent = `💾 Saving the book on your phone… ${Math.floor(100 * keeping.done / keeping.total)}%`;
+    else el.textContent = keepNote;
+  }
+
+  async function open(c) {
     ctx = c;
-    if (pair) showBook(); else showPick();
+    if (pair) return showBook();
+    const kept = loadState().kept;
+    if (!kept) return showPick();
+    const id = render('Books', `<div class="big-emoji">📖</div><h2 class="center">Opening ${esc(kept.title || 'your book')}…</h2>`, '', ctx.showHome);
+    const files = await keptFiles();
+    if (id !== screenId) return;
+    if (!files) { keepNote = ''; return showPick(); }
+    picked = files;
+    loadPair(true);
   }
 
   function showPick() {
@@ -939,7 +1107,8 @@
       <p class="center">Pick the same audiobook in English and in Spanish. You hear a bit in English, then the same bit in Spanish.</p>
       <div class="bk-picks">${card('en', 'English book')}${card('es', 'Spanish book')}</div>
       ${last ? `<p class="small center">Last time: <b>${esc(last.title)}</b>. Pick the same files to keep your place and chapter matches.</p>` : ''}
-      <p class="small center">M4B or MP3 (an MP3 book can be lots of files: pick them all). Audible and Apple Books files are locked and won't open. Your books stay on your phone.</p>`,
+      <p class="small center">M4B or MP3 (an MP3 book can be lots of files: pick them all). Audible and Apple Books files are locked and won't open.</p>
+      <p class="small center">The app keeps a copy of the book on your phone, so next time it opens right away. Picking new books replaces it.</p>`,
       `<button class="btn bk-open"${picked.en && picked.es ? '' : ' disabled'}>Open the book</button>`);
     ctx.app.querySelectorAll('.bk-pick input').forEach(inp => inp.addEventListener('change', () => {
       if (inp.files.length) picked[inp.dataset.lang] = [...inp.files];
@@ -948,7 +1117,8 @@
     ctx.app.querySelector('.bk-open').addEventListener('click', loadPair);
   }
 
-  async function loadPair() {
+  // fromPhone: the files are the kept copies, so there's nothing to save.
+  async function loadPair(fromPhone) {
     const id = render('Books', `<div class="big-emoji">📖</div><h2 class="center">Opening the books…</h2>
       <p class="center small">Reading the chapters. This takes a moment.</p>`, '', showPick);
     try {
@@ -957,9 +1127,22 @@
       if (!en.duration || !es.duration) throw new Error('unplayable');
       pair = makePair(en, es);
       updateBook(() => {});
+      if (fromPhone !== true) {
+        keepNote = '';
+        keepFiles(picked).then(r => {
+          keepNote = {
+            ok: '✓ Saved on your phone. Next time it opens right here.',
+            full: 'Not enough space on the phone to keep this book, so you\'ll need to pick the files again next time.',
+            unsupported: 'This browser can\'t keep the book, so you\'ll need to pick the files again next time.',
+            failed: 'Couldn\'t save the book on your phone, so you\'ll need to pick the files again next time.',
+          }[r];
+          drawKeep();
+        });
+      }
       showBook();
     } catch (e) {
       if (id !== screenId) return;
+      if (fromPhone === true) { await forgetKept(); picked = { en: null, es: null }; return showPick(); }
       render('Books', `<div class="big-emoji">😕</div><h2 class="center">That didn't open</h2>
         <p class="center">One of the files couldn't be played. Check that it's an M4B or MP3 audiobook, and not an Audible or Apple Books file.</p>`,
         '<button class="btn">Pick again</button>', showPick);
@@ -995,11 +1178,13 @@
             <span class="row-text"><b>${esc(s.title)}</b><small>${fmt(s.start)} · ${chapterStatus(i, st)}</small></span></button>
           ${i ? `<button class="bk-rematch" data-i="${i}" aria-label="Match this ${word.toLowerCase()}">🎯</button>` : ''}
         </div>`).join('')}</div>`,
-      `<button class="btn bk-listen">🎧 ${pos ? `Keep listening · ${word} ${pos.i + 1}` : 'Start listening'}</button>
+      `<p class="small center bk-keep"></p>
+       <button class="btn bk-listen">🎧 ${pos ? `Keep listening · ${word} ${pos.i + 1}` : 'Start listening'}</button>
        <button class="btn ghost bk-other">Pick other books</button>`);
+    drawKeep();
     ctx.app.querySelectorAll('.bk-ch').forEach(b => b.addEventListener('click', () => openPlayer(+b.dataset.i, null, true)));
     ctx.app.querySelectorAll('.bk-rematch').forEach(b => b.addEventListener('click', () => showFinder(+b.dataset.i, 0, () => showBook())));
-    ctx.app.querySelector('.bk-listen').addEventListener('click', () => openPlayer(pos ? pos.i : 0, pos ? pos.d : null, true));
+    ctx.app.querySelector('.bk-listen').addEventListener('click', () => openPlayer(pos ? pos.i : 0, pos ? pos.d : null, true, pos));
     ctx.app.querySelector('.bk-other').addEventListener('click', () => { pair = null; picked = { en: null, es: null }; showPick(); });
   }
 

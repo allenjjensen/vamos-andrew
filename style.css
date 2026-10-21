@@ -480,6 +480,8 @@ p.version-tag { margin: -4px 0 10px; }
 }
 .bk-seq .l.on { background: var(--teal); border-color: var(--teal); color: #fff; transform: scale(1.12); }
 .bk-seq .l.done { color: var(--ink); }
+.bk-seq .l.extra { border-style: dashed; }
+.bk-set-msg { min-height: 1.2em; margin: 0; color: var(--teal); font-weight: 700; }
 .bk-seq i { color: var(--muted); font-style: normal; font-weight: 800; }
 .bk-bar { flex: none; margin: 8px 0 4px; height: 10px; }
 .bk-controls { display: flex; justify-content: center; align-items: center; gap: 24px; margin: 18px 0 2px; }
