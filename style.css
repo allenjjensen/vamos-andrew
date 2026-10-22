@@ -522,3 +522,5 @@ p.version-tag { margin: -4px 0 10px; }
 .wt-pop small { display: block; color: var(--muted); margin-top: 4px; font-size: .8rem; }
 .wt-tip { margin: 14px 0 0; font-size: .85rem; color: var(--muted); text-align: center; }
 @keyframes pop-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.bk-switch { background: var(--teal); box-shadow: 0 4px 0 var(--teal-dark); margin-top: 6px; }
+.bk-switch:active { box-shadow: 0 2px 0 var(--teal-dark); }

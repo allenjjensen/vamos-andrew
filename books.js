@@ -629,8 +629,9 @@
   ];
   const ORDERS = [
     ['en-es', 'English, then Spanish'], ['es-en-es', 'Spanish, English, Spanish again'],
-    ['es-en', 'Spanish, then English'], ['es', 'Spanish only'],
+    ['es-en', 'Spanish, then English'], ['es', 'Spanish only'], ['manual', 'I switch myself (tap ⇄)'],
   ];
+  const manual = () => settings().order === 'manual';
   const SPEEDS = ['0.5', '0.6', '0.7', '0.75', '0.8', '0.85', '0.9', '1', '1.1', '1.2', '1.25', '1.3', '1.4', '1.5', '1.75', '2', '2.25', '2.5', '2.75', '3']
     .map(v => [v, v === '1' ? '1x (normal)' : `${v}x`]);
   const LABELS = { size: 'Switch languages every', order: 'Play order', speedEn: 'English speed', speed: 'Spanish speed' };
@@ -654,6 +655,7 @@
   // The next chunk from (d0, f0): it ends at a pause near the chosen length, preferring
   // pauses that were paired with the other book, so both halves end at the same place.
   function nextChunk(al, d0, f0, size) {
+    if (manual()) return { d0, f0, d1: al.dE, f1: al.fE, last: true }; // one language to the end of the chapter
     const T = (SIZES.find(s => s[0] === size) || SIZES[3])[2];
     // short chunks can stretch a lot to find a good pause; long ones stay close to the length asked for
     const lo = T < 60 ? 0.6 : 0.85, hi = T < 60 ? 1.7 : 1.2;
@@ -672,6 +674,23 @@
     return { d0, f0, d1, f1 };
   }
   function rangeOf(chunk, lang) { return lang === pair.dLang ? [chunk.d0, chunk.d1] : [chunk.f0, chunk.f1]; }
+
+  // The same moment in both books, from time t in one language: { d, f }. The other book
+  // starts at the closest pause just before it, so it begins at the start of a sentence.
+  function sameSpot(al, lang, t) {
+    const fromD = lang === pair.dLang;
+    const flip = al.points.map(p => ({ d: p.f, f: p.d }));
+    const raw = fromD ? mapThrough(al.points, t) : mapThrough(flip, t);
+    const list = fromD ? al.b : al.a;
+    let at = raw - 1;
+    for (const p of list) {
+      if (p.t > raw + 0.3) break;
+      if (p.t >= raw - 4) at = p.t;
+    }
+    const other = fromD ? [al.fS, al.fE] : [al.dS, al.dE];
+    at = Math.min(Math.max(at, other[0]), other[1] - 0.5);
+    return fromD ? { d: t, f: at } : { d: at, f: t };
+  }
 
   const els = { en: document.createElement('audio'), es: document.createElement('audio') };
   let P = null; // the player while it's open
@@ -693,7 +712,6 @@
     const end = Math.min(to, partEnd) - part.offset;
     const url = urlOf(part);
     const rate = rateOf(lang);
-    P.now = () => part.offset + el.currentTime; // where this language is right now, in book time
     const watch = () => {
       if (!P || token !== P.token) return;
       const left = (end - el.currentTime) / (el.playbackRate || 1);
@@ -710,6 +728,7 @@
       el.defaultPlaybackRate = rate;
       el.playbackRate = rate;
       el.currentTime = Math.max(0, local);
+      P.now = () => part.offset + el.currentTime; // where this language is right now, in book time
       el.play().then(watch, () => { if (P && token === P.token) { stopPlayer(); drawNow(); } });
     };
     if (el.src === url && el.readyState >= 1) start();
@@ -730,6 +749,7 @@
     updateBook(b => { b.pos = pos; });
   }
   setInterval(() => { if (P && P.playing) savePos(); }, 5000);
+  setInterval(() => { if (P && P.playing) drawNow(); }, 1000); // keeps the time and bar moving
   document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
 
   // Opens the player at section i (at driver time d if given, or a saved spot), first asking
@@ -768,7 +788,34 @@
     if (autoplay) runChunk(P.step, true); else savePos();
   }
 
-  function seqFor(chunk) { return settings().order.split('-').map(lang => ({ lang, range: rangeOf(chunk, lang) })); }
+  function seqFor(chunk) {
+    const order = manual() ? (settings().manualLang || 'en') : settings().order;
+    return order.split('-').map(lang => ({ lang, range: rangeOf(chunk, lang) }));
+  }
+
+  // ⇄: jumps to the same spot in the other language right now.
+  // Manual order: keeps going in that language. Otherwise: plays the rest of this chunk in that language.
+  function switchNow() {
+    if (!P.seq.length) P.seq = seqFor(P.chunk);
+    const s = P.seq[P.step] || P.seq[0];
+    const other = s.lang === 'en' ? 'es' : 'en';
+    const t = P.playing && P.now ? P.now() : P.resume && P.resume.step === P.step ? P.resume.t : s.range[0];
+    const spot = sameSpot(P.al, s.lang, t);
+    P.extra = -1;
+    if (manual()) {
+      setSetting('manualLang', other);
+      P.chunk = { d0: spot.d, f0: spot.f, d1: P.al.dE, f1: P.al.fE, last: true };
+      P.seq = seqFor(P.chunk);
+      P.resume = null;
+      return runChunk(0, true);
+    }
+    let j = P.seq.findIndex((x, k) => k > P.step && x.lang === other);
+    if (j < 0) j = P.seq.findIndex(x => x.lang === other);
+    if (j < 0) { j = P.step + 1; P.seq.splice(j, 0, { lang: other, range: rangeOf(P.chunk, other) }); } // "Spanish only"
+    const r = P.seq[j].range, at = other === pair.dLang ? spot.d : spot.f;
+    P.resume = at > r[0] + 0.5 && at < r[1] - 1 ? { step: j, t: at } : null;
+    runChunk(j, true);
+  }
   // Plays the current chunk from one of its steps. keepSeq keeps the order already set for this chunk.
   function runChunk(fromStep, keepSeq) {
     stopPlayer();
@@ -783,6 +830,7 @@
     if (!P || token !== P.token) return;
     const s = P.seq[P.step];
     if (!s) return advance();
+    P.now = null; // set again once the next language starts
     drawNow();
     const from = P.resume && P.resume.step === P.step ? P.resume.t : s.range[0];
     P.resume = null;
@@ -816,6 +864,7 @@
         <button class="bk-c main bk-main" aria-label="Play">▶</button>
         <button class="bk-c bk-next" aria-label="Next">⏭</button>
       </div>
+      <button class="btn bk-switch">⇄ Switch to Spanish</button>
       <button class="btn ghost bk-again">🔁 Spanish again</button>
       <div class="bk-nudge">
         <p class="small center"><b>Spanish out of step?</b> Move it one sentence. It's saved for next time.</p>
@@ -842,15 +891,32 @@
       runChunk(0);
     });
     stage.querySelector('.bk-again').addEventListener('click', spanishAgain);
+    stage.querySelector('.bk-switch').addEventListener('click', switchNow);
     stage.querySelector('.bk-earlier').addEventListener('click', () => nudge(-1));
     stage.querySelector('.bk-later').addEventListener('click', () => nudge(1));
     stage.querySelectorAll('.bk-settings select').forEach(sel => sel.addEventListener('change', () => {
       const k = sel.dataset.k, msg = stage.querySelector('.bk-set-msg');
+      const was = settings().order;
       setSetting(k, sel.value);
       msg.textContent = '';
       if (k === 'speed' || k === 'speedEn') {
         const el = els[k === 'speed' ? 'es' : 'en'];
         el.playbackRate = el.defaultPlaybackRate = +sel.value;
+      } else if (k === 'order' && (was === 'manual' || sel.value === 'manual')) {
+        // into or out of manual: carry on from the spot playing now, in the language playing now
+        const s = P.seq[P.step] || seqFor(P.chunk)[0];
+        const t = P.playing && P.now ? P.now() : P.resume && P.resume.step === P.step ? P.resume.t : s.range[0];
+        const spot = s.lang === pair.dLang ? { d: t, f: sameSpot(P.al, s.lang, t).f } : { d: sameSpot(P.al, s.lang, t).d, f: t };
+        if (sel.value === 'manual') setSetting('manualLang', s.lang);
+        const wasPlaying = P.playing;
+        stopPlayer();
+        P.chunk = nextChunk(P.al, spot.d, spot.f, settings().size);
+        P.seq = seqFor(P.chunk);
+        P.step = Math.max(0, P.seq.findIndex(x => x.lang === s.lang));
+        P.extra = -1;
+        P.resume = null;
+        if (wasPlaying) { runChunk(P.step, true); return; }
+        savePos();
       } else if (k === 'order') {
         const fresh = seqFor(P.chunk), cur = P.seq[P.step];
         P.extra = -1;
@@ -908,15 +974,24 @@
     if (!P) return;
     const stage = ctx.app.querySelector('.stage');
     if (!stage || !stage.querySelector('.bk-seq')) return;
-    const seq = P.seq.length ? P.seq : settings().order.split('-').map(lang => ({ lang }));
+    const seq = P.seq.length ? P.seq : seqFor(P.chunk);
+    const isManual = manual();
     stage.querySelector('.bk-seq').innerHTML = seq.map((s, k) =>
       `<span class="l${P.playing && k === P.step ? ' on' : k < P.step ? ' done' : ''}${k === P.extra ? ' extra' : ''}">${s.lang.toUpperCase()}</span>`).join('<i>→</i>');
     const again = stage.querySelector('.bk-again');
     const queued = P.extra >= 0 && P.step <= P.extra;
     again.textContent = !queued ? '🔁 Spanish again' : P.step === P.extra && P.playing ? '⏭ Skip the extra Spanish' : '✕ No extra Spanish';
+    again.style.display = isManual ? 'none' : '';
+    const sizeSel = stage.querySelector('.bk-settings select[data-k="size"]');
+    if (sizeSel) sizeSel.parentElement.style.display = isManual ? 'none' : ''; // no chunks when he switches himself
+    const cur = (seq[P.step] || seq[0]).lang;
+    stage.querySelector('.bk-switch').textContent = `⇄ Switch to ${cur === 'en' ? 'Spanish' : 'English'}`;
     const al = P.al, c = P.chunk;
-    stage.querySelector('.bk-where').textContent = `Chunk ${P.n} · ${fmt(c.d0 - al.dS)} of ${fmt(al.dE - al.dS)}`;
-    stage.querySelector('.bk-bar i').style.width = `${Math.min(100, 100 * (c.d0 - al.dS) / Math.max(1, al.dE - al.dS))}%`;
+    // where he is in the chapter: live while playing, else the start of the chunk
+    let dNow = c.d0;
+    if (P.playing && P.now && seq[P.step]) { const t = P.now(); dNow = cur === pair.dLang ? t : sameSpot(al, cur, t).d; }
+    stage.querySelector('.bk-where').textContent = `${isManual ? '' : `Chunk ${P.n} · `}${fmt(dNow - al.dS)} of ${fmt(al.dE - al.dS)}`;
+    stage.querySelector('.bk-bar i').style.width = `${Math.min(100, 100 * (dNow - al.dS) / Math.max(1, al.dE - al.dS))}%`;
     const main = stage.querySelector('.bk-main');
     main.textContent = P.playing ? '⏸' : '▶';
     main.setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
@@ -1086,12 +1161,18 @@
     const id = render('Books', `<div class="big-emoji">📖</div><h2 class="center">Opening ${esc(kept.title || 'your book')}…</h2>`, '', ctx.showHome);
     const files = await keptFiles();
     if (id !== screenId) return;
-    if (!files) { keepNote = ''; return showPick(); }
+    if (!files) {
+      keepNote = '';
+      const s = loadState();
+      delete s.kept;
+      writeState(s);
+      return showPick(`The saved copy of <b>${esc(kept.title || 'your book')}</b> isn't on the phone anymore (the phone may have cleared space). Pick the same files again: your place and chapter matches are still saved.`);
+    }
     picked = files;
     loadPair(true);
   }
 
-  function showPick() {
+  function showPick(note) {
     const last = loadState().last;
     const card = (lang, label) => {
       const files = picked[lang];
@@ -1105,6 +1186,7 @@
       <div class="big-emoji">📚</div>
       <h2 class="center">Listen in two languages</h2>
       <p class="center">Pick the same audiobook in English and in Spanish. You hear a bit in English, then the same bit in Spanish.</p>
+      ${typeof note === 'string' ? `<div class="trick">⚠️ ${note}</div>` : ''}
       <div class="bk-picks">${card('en', 'English book')}${card('es', 'Spanish book')}</div>
       ${last ? `<p class="small center">Last time: <b>${esc(last.title)}</b>. Pick the same files to keep your place and chapter matches.</p>` : ''}
       <p class="small center">M4B or MP3 (an MP3 book can be lots of files: pick them all). Audible and Apple Books files are locked and won't open.</p>
