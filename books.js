@@ -712,6 +712,15 @@
     const end = Math.min(to, partEnd) - part.offset;
     const url = urlOf(part);
     const rate = rateOf(lang);
+    // Phones sometimes pause or stall a player on their own (most often right after the
+    // switch), so the watch checks twice a second and gets it going again.
+    let lastT = -1, still = 0, kicks = 0, ready = false;
+    const giveUp = () => {
+      stopPlayer();
+      drawNow();
+      const msg = ctx && ctx.app.querySelector('.bk-status');
+      if (msg) msg.textContent = 'The phone stopped the audio. Tap ▶ to keep going.';
+    };
     const watch = () => {
       if (!P || token !== P.token) return;
       const left = (end - el.currentTime) / (el.playbackRate || 1);
@@ -721,18 +730,56 @@
         else done();
         return;
       }
-      P.timer = setTimeout(watch, left > 0.6 ? (left - 0.4) * 1000 : 25);
+      if (el.paused) {
+        if (++kicks > 6) return giveUp(); // it really won't play: show ▶ so he can tap it
+        el.play().catch(() => {});
+      } else if (!el.seeking && Math.abs(el.currentTime - lastT) < 0.01) {
+        if (++still >= 8) { // 4 seconds without moving: nudge it
+          still = 0;
+          if (++kicks > 6) return giveUp();
+          el.currentTime = el.currentTime + 0.05;
+          el.play().catch(() => {});
+        }
+      } else { still = 0; kicks = 0; }
+      lastT = el.currentTime;
+      if (left < 3) prepareNext();
+      P.timer = setTimeout(watch, left > 0.8 ? Math.min(500, (left - 0.4) * 1000) : 25);
     };
     const start = () => {
-      if (!P || token !== P.token) return;
+      if (!P || token !== P.token || ready) return;
+      ready = true;
       el.defaultPlaybackRate = rate;
       el.playbackRate = rate;
-      el.currentTime = Math.max(0, local);
+      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = Math.max(0, local);
       P.now = () => part.offset + el.currentTime; // where this language is right now, in book time
-      el.play().then(watch, () => { if (P && token === P.token) { stopPlayer(); drawNow(); } });
+      // if the phone says no, try a few more times before asking him to tap ▶
+      const tryPlay = n => el.play().then(watch, () => {
+        if (!P || token !== P.token) return;
+        if (n >= 4) return giveUp();
+        setTimeout(() => { if (P && token === P.token) tryPlay(n + 1); }, 300 * (n + 1));
+      });
+      tryPlay(0);
     };
     if (el.src === url && el.readyState >= 1) start();
-    else { el.addEventListener('loadedmetadata', start, { once: true }); el.src = url; }
+    else {
+      el.addEventListener('loadedmetadata', start, { once: true });
+      el.src = url;
+      // if the file never reports in, try loading it once more
+      setTimeout(() => { if (!ready && P && token === P.token) { el.load(); } }, 4000);
+    }
+  }
+
+  // Just before a language ends, puts the other player at the spot it starts from,
+  // so the switch doesn't wait on the phone finding its place in a big file.
+  function prepareNext() {
+    const s = P && P.seq[P.step + 1];
+    const key = `${P.token}:${P.n}:${P.step}`;
+    if (!s || P.prepared === key) return;
+    P.prepared = key;
+    const cur = P.seq[P.step];
+    if (cur && cur.lang === s.lang) return;
+    const el = els[s.lang], { part, local } = locate(pair[s.lang], s.range[0]);
+    if (el.src === urlOf(part) && el.readyState >= 1 && el.paused) el.currentTime = Math.max(0, local);
   }
 
   function needsMatch(i) {
@@ -820,6 +867,8 @@
   function runChunk(fromStep, keepSeq) {
     stopPlayer();
     const token = P.token;
+    const msg = ctx && ctx.app.querySelector('.bk-status');
+    if (msg && /stopped the audio/.test(msg.textContent)) msg.textContent = '';
     if (!keepSeq || !P.seq.length) { P.seq = seqFor(P.chunk); P.extra = -1; P.resume = null; }
     P.step = fromStep || 0;
     P.playing = true;
@@ -864,6 +913,7 @@
         <button class="bk-c main bk-main" aria-label="Play">▶</button>
         <button class="bk-c bk-next" aria-label="Next">⏭</button>
       </div>
+      <p class="center bk-status"></p>
       <button class="btn bk-switch">⇄ Switch to Spanish</button>
       <button class="btn ghost bk-again">🔁 Spanish again</button>
       <div class="bk-nudge">
@@ -1315,5 +1365,5 @@
     }));
   }
 
-  window.BOOKS = { open, stop, readBook, decodeRange, pausesIn, alignRange, alignSection, mapThrough, get pair() { return pair; }, get player() { return P; } };
+  window.BOOKS = { open, stop, readBook, decodeRange, pausesIn, alignRange, alignSection, mapThrough, get pair() { return pair; }, get player() { return P; }, els };
 })();
