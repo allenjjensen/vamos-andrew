@@ -7,8 +7,8 @@
   const app = document.getElementById('app');
   const LESSONS = window.LESSONS || [];
   // Shown at the end of the lesson list, so it's clear more are being made (not locked).
-  const COMING_NEXT = ['Going to & will: talking about tomorrow', 'Describing things: big, old, broken', 'Used to: when I was a kid'];
-  const UNIT_ICON = { 'The basics': '🧱', 'Booking jobs': '📞' };
+  const COMING_NEXT = ['Will: talking about the future', 'Used to: when I was a kid', 'Trouble on the job: problems and fixes'];
+  const UNIT_ICON = { 'The basics': '🧱', 'Booking jobs': '📞', 'Sizing up the job': '📏' };
   // Books is shown to everyone while Andrew tests it. Opening the app once with ?books=off hides it (?books brings it back).
   const BOOKS_ON = (() => {
     try {
