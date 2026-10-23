@@ -692,16 +692,20 @@
     return fromD ? { d: t, f: at } : { d: at, f: t };
   }
 
-  const els = { en: document.createElement('audio'), es: document.createElement('audio') };
+  // One player for both books: it swaps files when the language changes. (With a player per
+  // language, Andrew's phone refused to restart the first one once the second had played.)
+  const player = document.createElement('audio');
+  player.preload = 'auto';
+  const els = { en: player, es: player };
   let P = null; // the player while it's open
 
   function stopPlayer() {
     if (!P) return;
     P.token++;
     clearTimeout(P.timer);
-    els.en.pause();
-    els.es.pause();
+    player.pause();
     P.playing = false;
+    showSession();
   }
 
   // Plays book time [from, to) in one language, crossing into the next file if the book has several.
@@ -712,8 +716,8 @@
     const end = Math.min(to, partEnd) - part.offset;
     const url = urlOf(part);
     const rate = rateOf(lang);
-    // Phones sometimes pause or stall a player on their own (most often right after the
-    // switch), so the watch checks twice a second and gets it going again.
+    // The watch checks twice a second. A pause the app didn't make (headphones, a call,
+    // unplugging) is a real pause, so the player stops there. A stall gets a nudge.
     let lastT = -1, still = 0, kicks = 0, ready = false;
     const giveUp = () => {
       stopPlayer();
@@ -731,9 +735,13 @@
         return;
       }
       if (el.paused) {
-        if (++kicks > 6) return giveUp(); // it really won't play: show ▶ so he can tap it
-        el.play().catch(() => {});
-      } else if (!el.seeking && Math.abs(el.currentTime - lastT) < 0.01) {
+        P.resume = { step: P.step, t: part.offset + el.currentTime };
+        stopPlayer();
+        savePos();
+        drawNow();
+        return;
+      }
+      if (!el.seeking && Math.abs(el.currentTime - lastT) < 0.01) {
         if (++still >= 8) { // 4 seconds without moving: nudge it
           still = 0;
           if (++kicks > 6) return giveUp();
@@ -742,7 +750,6 @@
         }
       } else { still = 0; kicks = 0; }
       lastT = el.currentTime;
-      if (left < 3) prepareNext();
       P.timer = setTimeout(watch, left > 0.8 ? Math.min(500, (left - 0.4) * 1000) : 25);
     };
     const start = () => {
@@ -767,19 +774,31 @@
       // if the file never reports in, try loading it once more
       setTimeout(() => { if (!ready && P && token === P.token) { el.load(); } }, 4000);
     }
+    showSession();
   }
 
-  // Just before a language ends, puts the other player at the spot it starts from,
-  // so the switch doesn't wait on the phone finding its place in a big file.
-  function prepareNext() {
-    const s = P && P.seq[P.step + 1];
-    const key = `${P.token}:${P.n}:${P.step}`;
-    if (!s || P.prepared === key) return;
-    P.prepared = key;
-    const cur = P.seq[P.step];
-    if (cur && cur.lang === s.lang) return;
-    const el = els[s.lang], { part, local } = locate(pair[s.lang], s.range[0]);
-    if (el.src === urlOf(part) && el.readyState >= 1 && el.paused) el.currentTime = Math.max(0, local);
+  // ---------- headphone and lock-screen buttons ----------
+  // With these set, the phone sends play/pause/next/back to the app instead of pausing the audio itself.
+  function showSession() {
+    if (!('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    if (!P) { ms.playbackState = 'none'; return; }
+    try {
+      ms.metadata = new MediaMetadata({
+        title: pair.sections[P.i].title, artist: pair.title, album: '¡Vamos, Andrew!',
+        artwork: [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
+      });
+    } catch (e) { /* no metadata */ }
+    ms.playbackState = P.playing ? 'playing' : 'paused';
+  }
+  function setSessionButtons() {
+    if (!('mediaSession' in navigator)) return;
+    const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) { /* not on this phone */ } };
+    set('play', () => { if (P && !P.playing) togglePlay(); });
+    set('pause', () => { if (P && P.playing) togglePlay(); });
+    set('stop', () => { if (P && P.playing) togglePlay(); });
+    set('nexttrack', () => { if (P) { stopPlayer(); advance(); } });
+    set('previoustrack', () => { if (P) backChunk(); });
   }
 
   function needsMatch(i) {
@@ -924,22 +943,10 @@
       <div class="bk-settings">${select('size', SIZES)}${select('order', ORDERS)}${select('speedEn', SPEEDS)}${select('speed', SPEEDS)}
         <p class="small center bk-set-msg"></p></div>`;
     foot.innerHTML = '';
-    stage.querySelector('.bk-main').addEventListener('click', () => {
-      if (P.playing) {
-        // pausing remembers the exact second, so play picks up right there
-        if (P.now) P.resume = { step: P.step, t: P.now() };
-        stopPlayer();
-        savePos();
-        drawNow();
-      } else runChunk(P.step < P.seq.length ? P.step : 0, true);
-    });
+    stage.querySelector('.bk-main').addEventListener('click', togglePlay);
     stage.querySelector('.bk-next').addEventListener('click', () => { stopPlayer(); advance(); });
-    stage.querySelector('.bk-back').addEventListener('click', () => {
-      const now = Date.now();
-      if (now - P.lastBack < 1500 && P.history.length) { P.chunk = P.history.pop(); P.n--; }
-      P.lastBack = now;
-      runChunk(0);
-    });
+    stage.querySelector('.bk-back').addEventListener('click', backChunk);
+    setSessionButtons();
     stage.querySelector('.bk-again').addEventListener('click', spanishAgain);
     stage.querySelector('.bk-switch').addEventListener('click', switchNow);
     stage.querySelector('.bk-earlier').addEventListener('click', () => nudge(-1));
@@ -950,8 +957,8 @@
       setSetting(k, sel.value);
       msg.textContent = '';
       if (k === 'speed' || k === 'speedEn') {
-        const el = els[k === 'speed' ? 'es' : 'en'];
-        el.playbackRate = el.defaultPlaybackRate = +sel.value;
+        const cur = P.seq[P.step];
+        if (cur && cur.lang === (k === 'speed' ? 'es' : 'en')) player.playbackRate = player.defaultPlaybackRate = +sel.value;
       } else if (k === 'order' && (was === 'manual' || sel.value === 'manual')) {
         // into or out of manual: carry on from the spot playing now, in the language playing now
         const s = P.seq[P.step] || seqFor(P.chunk)[0];
@@ -988,6 +995,23 @@
       drawNow();
     }));
     drawNow();
+  }
+
+  // ▶ / ⏸ (also the headphone button). Pausing remembers the exact second, so play picks up right there.
+  function togglePlay() {
+    if (P.playing) {
+      if (P.now) P.resume = { step: P.step, t: P.now() };
+      stopPlayer();
+      savePos();
+      drawNow();
+    } else runChunk(P.step < P.seq.length ? P.step : 0, true);
+  }
+  // ⏮: back to the start of this chunk; twice quickly goes to the chunk before.
+  function backChunk() {
+    const now = Date.now();
+    if (now - P.lastBack < 1500 && P.history.length) { P.chunk = P.history.pop(); P.n--; }
+    P.lastBack = now;
+    runChunk(0);
   }
 
   // "Spanish again": adds one more Spanish play of this chunk (now if paused, next if playing).
