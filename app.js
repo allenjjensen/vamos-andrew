@@ -184,6 +184,7 @@
       <header class="home-head">
         <div class="logo">¡Hola, ${NAME}!</div>
         <p class="tagline">Spanish in 10 minutes a day</p>
+        ${(save.secrets || []).includes('chupacabra') ? '<p class="secret-badge">🐐 You met El Chupacabra</p>' : ''}
       </header>
       ${streakStrip(save)}
       ${reviewCard(save)}
@@ -339,6 +340,11 @@
       if (s.type === 'practice') steps.push(...(version < 0 ? mixedPractice(L, s, save) : s.sets[version % s.sets.length]));
       else if (s.type === 'talkSet') steps.push(version < 0 ? pick(s.scenes) : s.scenes[version % s.scenes.length]);
       else steps.push(s);
+    }
+    // Easter egg: now and then on a replay, a very strange customer takes the conversation (extras.js). ?egg forces it.
+    const talkAt = steps.findIndex(x => x.type === 'talk');
+    if (talkAt >= 0 && window.SECRET_CUSTOMER && (/[?&]egg\b/.test(location.search) || (runs && Math.random() < 1 / 25))) {
+      steps[talkAt] = window.SECRET_CUSTOMER;
     }
     // First time through: a reminder of the word types (verb, noun…) the lesson talks about.
     const terms = lessonTerms(L);
@@ -946,7 +952,7 @@
           const c = order[+b.dataset.k];
           bubble(c.good ? 'me' : 'me oops', c.es);
           say(c.es);
-          if (first) {
+          if (first && !s.secret) {
             run.asked++;
             if (c.good) run.right++;
             else { const id = talkLineId(run.L.id, L); deckMiss(id); run.toReview.add(id); }
@@ -976,6 +982,12 @@
         run.bonus = { value: FACES[mood], label: tip.text };
         sfx.done();
         bubble('narrate', `${s.who.name} is ${MOODS[mood]}. You get: <b>${tip.text}</b>`);
+        if (s.secret) {
+          const save = loadSave();
+          save.secrets = save.secrets || [];
+          if (!save.secrets.includes(s.secret)) { save.secrets.push(s.secret); writeSave(save); }
+          bubble('narrate', `🥚 <b>You found a secret customer!</b> Not many people meet ${s.who.name}. He left something on your home screen…`);
+        }
         foot.innerHTML = '<button class="btn">Continue</button>';
         foot.querySelector('.btn').addEventListener('click', next);
         window.scrollTo(0, document.body.scrollHeight);

@@ -139,6 +139,12 @@ window.DICT_WORDS = {
   parece: 'seems (¿le parece bien? = does that sound good to you?)', entendido: 'understood, got it',
   ah: 'oh', ay: 'oh! (ay, no = oh no)', ja: 'ha', hmm: 'hmm', mmm: 'hmm', hmph: 'hmph (a grumpy sound)', oiga: 'hey! (polite)',
   genial: 'great', mientras: 'while (mientras tanto = meanwhile)', pronto: 'soon', 'café': 'coffee',
+
+  // the secret customer (extras.js)
+  noches: 'nights (buenas noches = good evening, good night)', mordido: 'bitten', espere: 'wait (polite)', cabra: 'goat', cabras: 'goats',
+  peluche: 'stuffed toy (de peluche = stuffed, plush)', dan: 'give (me dan hambre = they make me hungry)', hambre: 'hunger (tener hambre = to be hungry)',
+  'cené': 'I had dinner', doscientas: 'two hundred (girl words)', buen: 'good (before a boy word: un buen precio)', moneda: 'coin', monedas: 'coins',
+  chupacabra: 'chupacabra (a legendary goat-sucking monster)', cueva: 'cave', siglos: 'centuries (hace siglos = for centuries)',
 };
 
 window.DICT_EN = [
@@ -197,5 +203,8 @@ window.DICT_EN = [
   ['sound', 'parecer (sounds good = me parece bien)'], ['stay', 'quedarse (it stays = se queda)'], ['stuff', 'cosas'],
   ["they'll", "van a… (they're going to)"], ['would', '-ría (I would like = me gustaría)'], ['wrong', 'mal'],
   ['yikes', '¡uy!'], ['yourself', 'usted mismo / usted misma'], ['mixed', 'mezclado'], ['buying', 'comprar'],
+  ['rid', 'get rid of = sacar / tirar'], ['whom', 'quién (by whom = por quién)'], ['toy', 'juguete (stuffed toy = de peluche)'],
+  ['real', 'de verdad'], ['hungry', 'hambre (tener hambre)'], ['relax', 'tranquilo'], ['dinner', 'cena'], ['seem', 'parecer'],
+  ["i've", 'he… (I have)'], ['been', 'estado / sido'],
   ['call', 'llamar / llamada'], ['calling', 'llamar (gracias por llamar)'], ['test', 'examen'], ['full', 'lleno'], ['empty', 'vacío / vaciar'],
 ];

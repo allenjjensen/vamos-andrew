@@ -92,6 +92,7 @@ input, textarea, .code-box { -webkit-user-select: text; user-select: text; }
 .home-head { text-align: center; padding: 28px 0 18px; }
 .logo { font-size: 2.6rem; font-weight: 900; color: var(--brand); line-height: 1.1; }
 .tagline { color: var(--muted); margin: 6px 0 0; font-weight: 700; }
+.secret-badge { display: inline-block; margin: 10px 0 0; padding: 4px 12px; border-radius: 999px; font-size: .85rem; font-weight: 800; color: var(--teal); border: 2px dashed var(--teal); }
 .lessons { display: grid; gap: 12px; }
 .unit-head { margin: 10px 2px -2px; font-size: 1.05rem; display: flex; align-items: center; gap: 8px; color: var(--ink, inherit); }
 .unit-head:first-child { margin-top: 0; }
