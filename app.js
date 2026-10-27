@@ -1133,22 +1133,131 @@
   }
 
   // ---------- gym questions: each returns prompt, options, and the explanations ----------
+  // A verb's form in any tense (null if that tense doesn't list the verb).
+  function formIn(tense, inf, p) {
+    for (const g of tense.groups) {
+      const v = g.verbs.find(x => x[0] === inf);
+      if (v) return formsOf(g, v)[p];
+    }
+    return null;
+  }
+
+  // English for a verb form ("we spoke", "she is going to eat"), for the meaning questions. null when there's no simple way to say it.
+  const EN_PAST = {
+    speak: 'spoke', eat: 'ate', learn: 'learned', help: 'helped', drink: 'drank', load: 'loaded', understand: 'understood', run: 'ran',
+    decide: 'decided', say: 'said', write: 'wrote', study: 'studied', do: 'did', go: 'went', play: 'played', read: 'read', clean: 'cleaned',
+    call: 'called', carry: 'carried', drive: 'drove', need: 'needed', open: 'opened', pay: 'paid', can: 'could', want: 'wanted',
+    receive: 'received', leave: 'left', have: 'had', throw: 'threw', work: 'worked', sell: 'sold', come: 'came', see: 'saw', live: 'lived',
+  };
+  const EN_WHO = ['I', 'you', 'he / she', 'we', 'they'];
+  const EN_BE = ['am', 'are', 'is', 'are', 'are'];
+  function enThird(w) {
+    if (w === 'have') return 'has';
+    if (/(s|sh|ch|x|z|o)$/.test(w)) return w + 'es';
+    if (/[^aeiou]y$/.test(w)) return w.slice(0, -1) + 'ies';
+    return w + 's';
+  }
+  function verbEn(v, tense, p, who = EN_WHO[p]) {
+    const base = v[1].split(/[,(]/)[0].trim().replace(/^to /, '');
+    const [head, ...tail] = base.split(' '), rest = tail.length ? ' ' + tail.join(' ') : '';
+    const able = base === 'can' ? 'be able to' : base;
+    if (tense.id === 'present') {
+      if (base === 'can') return `${who} can`;
+      if (head === 'be') return `${who} ${EN_BE[p]}${rest}`;
+      return `${who} ${p === 2 ? enThird(head) : head}${rest}`;
+    }
+    if (tense.id === 'future') return `${who} will ${able}`;
+    if (tense.id === 'goingto') return `${who} ${EN_BE[p]} going to ${able}`;
+    if (tense.id === 'imperfect') return `${who} used to ${able}`;
+    if (tense.id === 'preterite') {
+      if (head === 'be') return `${who} ${p === 0 || p === 2 ? 'was' : 'were'}${rest}`;
+      return EN_PAST[head] ? `${who} ${EN_PAST[head]}${rest}` : null;
+    }
+    return null;
+  }
+
+  // Verb questions come three ways: fill in the form, what does this form mean (English answers), or say it in Spanish.
   function verbQuestion(g) {
     const v = pick(g.verbs), p = Math.floor(Math.random() * 5);
+    const r = Math.random();
+    if (r < 0.25) { const q = verbMeaning(g, v, p); if (q) return q; }
+    else if (r < 0.5) { const q = verbToSpanish(g, v, p); if (q) return q; }
+    return verbFill(g, v, p);
+  }
+  function verbKicker(g) { return g.tense === PRESENT ? g.title : `${g.tense.title} · ${g.title}`; }
+  function verbHint(g, v) { return `<b>${v[0]}</b> · ${v[1]}${g.tense === PRESENT ? '' : ` · <span class="tense-tag">${g.tense.title}</span>`}`; }
+
+  // "hablamos" → we speak / they speak / we spoke… Wrong answers whose Spanish is the same word are left out (hablamos is also "we spoke").
+  function verbMeaning(g, v, p) {
+    const forms = formsOf(g, v), answer = forms[p], answerEn = verbEn(v, g.tense, p);
+    if (!answerEn) return null;
+    // Skip forms two verbs share in this tense (fui = I went / I was).
+    if (g.tense.groups.some(x => x.verbs.some(y => y[0] !== v[0] && formsOf(x, y).includes(answer)))) return null;
+    const esFor = {};
+    forms.forEach((f, i) => { const e = verbEn(v, g.tense, i); if (e && f !== answer) esFor[e] = f; });
+    CONJ.tenses.filter(t => t !== g.tense).forEach(t => {
+      const f = formIn(t, v[0], p), e = f && verbEn(v, t, p);
+      if (e && f !== answer && !esFor[e]) esFor[e] = f;
+    });
+    // Other people first, then the same person in another tense.
+    const people = shuffle(Object.keys(esFor).filter(e => forms.includes(esFor[e])));
+    const times = shuffle(Object.keys(esFor).filter(e => !forms.includes(esFor[e])));
+    const wrong = people.slice(0, 3).concat(times.slice(0, 1), people.slice(3), times.slice(1));
+    const how = howTo(g, v, p, CONJ.persons[p].show[0]);
+    return {
+      kicker: `${verbKicker(g)} · what does it mean?`, wide: true, prompt: answer, promptLang: 'es',
+      hint: 'Who does it, and when?', answer: answerEn,
+      options: someOptions(answerEn, wrong),
+      why: chosen => `"${chosen}" would be <b>${esFor[chosen]}</b>. <b>${answer}</b> is the <b>${CONJ.persons[p].key}</b> form: "${answerEn}". ${how}`,
+      explain: `<b>${answer}</b> = "${answerEn}". ${how}`,
+      table: conjTable(g, v, p),
+      say: answer,
+    };
+  }
+
+  // "we spoke" → hablamos / hablaron / hablé / hablamos-now… Not for "to be": I am could be soy or estoy.
+  function verbToSpanish(g, v, p) {
+    if (/^to be\b/.test(v[1])) return null;
+    const who = p === 2 ? pick(['he', 'she']) : p === 1 ? 'you (friend)' : EN_WHO[p];
+    const en = verbEn(v, g.tense, p, who);
+    if (!en) return null;
+    const forms = formsOf(g, v), answer = forms[p];
+    const others = shuffle([...new Set(forms)].filter(f => f !== answer));
+    const otherTimes = shuffle(CONJ.tenses.filter(t => t !== g.tense).map(t => formIn(t, v[0], p)).filter(f => f && f !== answer && !forms.includes(f)));
+    const wrong = others.slice(0, 3).concat(otherTimes.slice(0, 1), others.slice(3), otherTimes.slice(1));
+    const how = howTo(g, v, p, CONJ.persons[p].show[0]);
+    return {
+      kicker: `${verbKicker(g)} · say it in Spanish`, wide: true, prompt: `"${cap(en)}"`, promptLang: 'en',
+      hint: verbHint(g, v), answer,
+      options: someOptions(answer, wrong),
+      why(chosen) {
+        const i = forms.indexOf(chosen);
+        if (i >= 0) return `<b>${chosen}</b> is the <b>${CONJ.persons[i].key}</b> form. "${cap(en)}" needs the <b>${CONJ.persons[p].key}</b> form: <b>${answer}</b>. ${how}`;
+        const t = CONJ.tenses.find(x => formIn(x, v[0], p) === chosen);
+        return t ? `<b>${chosen}</b> is the ${t.name || 'present tense'}: "${verbEn(v, t, p, who)}". "${cap(en)}" is <b>${answer}</b>. ${how}`
+          : `"${cap(en)}" is <b>${answer}</b>. ${how}`;
+      },
+      explain: `"${cap(en)}" = <b>${answer}</b>. ${how}`,
+      table: conjTable(g, v, p),
+      say: answer,
+    };
+  }
+
+  function verbFill(g, v, p) {
     const forms = formsOf(g, v), answer = forms[p];
     const who = pick(CONJ.persons[p].show);
     const cue = pick(g.tense.cues);
     const lead = cue ? `${cue} ${who}` : who;
     const trap = g.tense === PRESENT ? null : presentForm(v[0], p);
     const others = shuffle([...new Set(forms)].filter(f => f !== answer));
-    const wrong = trap && !forms.includes(trap) ? [trap].concat(others.slice(0, 2)) : others.slice(0, 3);
+    const wrong = trap && !forms.includes(trap) ? [trap].concat(others) : others;
     const how = howTo(g, v, p, who);
     return {
-      kicker: g.tense === PRESENT ? g.title : `${g.tense.title} · ${g.title}`,
+      kicker: verbKicker(g),
       prompt: `${cap(lead)} ___`,
-      hint: `<b>${v[0]}</b> · ${v[1]}${g.tense === PRESENT ? '' : ` · <span class="tense-tag">${g.tense.title}</span>`}`,
+      hint: verbHint(g, v),
       answer,
-      options: shuffle([answer].concat(wrong)),
+      options: someOptions(answer, wrong),
       why(chosen) {
         if (chosen === trap && !forms.includes(chosen)) {
           return `<b>${chosen}</b> is the present tense (now). <b>${cue}</b> is your clue: it needs the ${g.tense.name}: <b>${answer}</b>. ${how}`;
@@ -1179,29 +1288,31 @@
     if (Math.random() < 0.15) {
       // No noun: esto / eso / aquello.
       const answer = d.neuter;
-      const other = pick(D.filter(x => x !== d));
+      const others = D.filter(x => x !== d);
       return {
         kicker: 'This & that', prompt: '¿Qué es ___?', hint: `"What is ${d.neuterEn}?" You don't know what it is yet.`,
-        answer, options: shuffle([answer, d.forms[0], d.forms[1], other.neuter]),
-        why: chosen => chosen === other.neuter
-          ? `<b>${chosen}</b> means "${other.neuterEn}". For "${d.neuterEn}" use <b>${answer}</b>.`
-          : WORDS.neuterRule,
+        answer, options: someOptions(answer, shuffle(others.map(x => x.neuter)).concat(shuffle(d.forms))),
+        why(chosen) {
+          const o = others.find(x => x.neuter === chosen);
+          return o ? `<b>${chosen}</b> means "${o.neuterEn}". For "${d.neuterEn}" use <b>${answer}</b>.` : WORDS.neuterRule;
+        },
         explain: WORDS.neuterRule,
         table: demoTable(d.id, -1),
         say: `¿Qué es ${answer}?`,
       };
     }
     const n = pick(WORDS.nouns), plural = Math.random() < 0.4, k = nounKind(n, plural);
-    const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
-    const label = d.en[plural ? 1 : 0];
-    const en = label.includes('…') ? label.replace('…', nEn) : `${label} ${nEn}`;
+    const noun = plural ? n[1] : n[0];
+    const en = demoEn(d, n, plural);
     const answer = d.forms[k];
-    const other = pick(D.filter(x => x !== d));
-    const wrong = shuffle(d.forms.filter((f, i) => i !== k)).slice(0, 2).concat(other.forms[k]);
     const note = n[5] ? ` ${n[5]}` : '';
+    const r = Math.random();
+    if (r < 1 / 3) return demoMeaning(d, n, plural);
+    if (r < 2 / 3) return demoToSpanish(d, n, plural);
+    const wrong = shuffle(d.forms.filter((f, i) => i !== k)).concat(shuffle(D.filter(x => x !== d)).map(x => x.forms[k]));
     return {
       kicker: 'This & that', prompt: `___ ${noun}`, hint: `"${en}"`,
-      answer, options: shuffle([answer].concat(wrong)),
+      answer, options: someOptions(answer, wrong.slice(0, 2).concat(wrong.slice(3), wrong.slice(2, 3))),
       why(chosen) {
         const owner = D.find(x => x.forms.includes(chosen)), ci = owner.forms.indexOf(chosen);
         if (owner !== d) {
@@ -1212,6 +1323,58 @@
       explain: `${cap(ARTICLE[k])} ${noun} is ${KIND[k]}, so <b>${answer}</b>.${note}`,
       table: demoTable(d.id, k),
       say: `${answer} ${noun}`,
+    };
+  }
+
+  // "this box", "those trucks over there"…
+  function demoEn(d, n, plural) {
+    const label = d.en[plural ? 1 : 0], nEn = plural ? n[4] : n[3];
+    return label.includes('…') ? label.replace('…', nEn) : `${label} ${nEn}`;
+  }
+  function demoEs(d, n, plural) { return `${d.forms[nounKind(n, plural)]} ${plural ? n[1] : n[0]}`; }
+
+  // "esas cajas" → those boxes / these boxes / that box / this box…
+  function demoMeaning(d, n, plural) {
+    const D = WORDS.demonstratives, es = demoEs(d, n, plural), answer = demoEn(d, n, plural);
+    const esFor = {};
+    D.forEach(x => [false, true].forEach(pl => { esFor[demoEn(x, n, pl)] = demoEs(x, n, pl); }));
+    // Same word other number, other words same number, then the rest.
+    const wrong = [demoEn(d, n, !plural)].concat(shuffle(D.filter(x => x !== d).map(x => demoEn(x, n, plural))), shuffle(D.filter(x => x !== d).map(x => demoEn(x, n, !plural))));
+    const word = d.en[plural ? 1 : 0].replace(' …', '');
+    return {
+      kicker: 'This & that · what does it mean?', wide: true, prompt: es, promptLang: 'es', hint: 'Pick the English.',
+      answer, options: someOptions(answer, wrong),
+      why: chosen => `"${chosen}" would be <b>${esFor[chosen]}</b>. <b>${es}</b> is "${answer}": <b>${d.forms[nounKind(n, plural)]}</b> = ${word}, and ${plural ? 'more than one' : 'just one'}. ${WORDS.demoTrick}`,
+      explain: `<b>${es}</b> = "${answer}". ${WORDS.demoTrick}`,
+      table: demoTable(d.id, nounKind(n, plural)),
+      say: es,
+    };
+  }
+
+  // "those boxes" → esas cajas / estas cajas / esos cajas / esa caja…
+  // "that box" could be esa or aquella, so the other "that" word never shows up as a wrong answer.
+  function demoToSpanish(d, n, plural) {
+    const D = WORDS.demonstratives, k = nounKind(n, plural), noun = plural ? n[1] : n[0], other = plural ? n[0] : n[1];
+    const en = demoEn(d, n, plural), answer = demoEs(d, n, plural);
+    const ok = D.filter(x => x === d || x.id === 'near' || d.id === 'near');
+    const mismatch = shuffle(d.forms.filter((f, i) => i !== k && i !== (k ^ 2))).map(f => `${f} ${noun}`);
+    const wrong = [mismatch[0], `${d.forms[k ^ 2]} ${other}`].concat(
+      shuffle(ok.filter(x => x !== d).map(x => `${x.forms[k]} ${noun}`)), mismatch.slice(1),
+      shuffle(ok.filter(x => x !== d).map(x => `${x.forms[k ^ 2]} ${other}`)), `${d.forms[k ^ 2]} ${noun}`);
+    const note = n[5] ? ` ${n[5]}` : '';
+    return {
+      kicker: 'This & that · say it in Spanish', wide: true, prompt: `"${cap(en)}"`, promptLang: 'en', hint: 'Pick the Spanish.',
+      answer, options: someOptions(answer, wrong),
+      why(chosen) {
+        const [f, ...rest] = chosen.split(' '), cn = rest.join(' ');
+        const owner = D.find(x => x.forms.includes(f)), ci = owner.forms.indexOf(f);
+        if (cn !== noun) return `<b>${chosen}</b> is "${demoEn(owner, n, !plural)}". You need ${plural ? 'more than one' : 'just one'}: <b>${answer}</b>.`;
+        if (owner !== d) return `<b>${f}</b> means "${owner.en[ci > 1 ? 1 : 0].replace(' …', '')}". "${en}" is <b>${answer}</b>. ${WORDS.demoTrick}`;
+        return `<b>${f}</b> is for ${KIND[ci]}. <b>${noun}</b> is ${KIND[k]} (${ARTICLE[k]} ${noun}), so: <b>${answer}</b>.${note}`;
+      },
+      explain: `"${en}" = <b>${answer}</b>. ${cap(ARTICLE[k])} ${noun} is ${KIND[k]}.${note}`,
+      table: demoTable(d.id, k),
+      say: answer,
     };
   }
 
@@ -1228,6 +1391,9 @@
     const P = WORDS.possessives, o = pick(P), n = pick(WORDS.nouns);
     const plural = Math.random() < 0.4, k = nounKind(n, plural);
     const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
+    const r = Math.random();
+    if (r < 0.3) return possMeaning(n, plural);
+    if (r < 0.6) return possToSpanish(o, n, plural);
     const long = Math.random() < 0.4;
     const isSu = o.long === 'suyo';
     const suNote = isSu ? ' <b>Su</b> can mean his, her, their or your (polite).' : '';
@@ -1250,11 +1416,10 @@
         .concat(shuffle(P.filter(x => x.long !== o.long)).map(x => agree(x.long, k)));
       explain = `After <b>es / son</b>, use the long form. It matches the thing: ${ARTICLE[k]} ${noun} → <b>${answer}</b>.${suNote}`;
     }
-    const wrong = [...new Set(pool)].filter(f => f !== answer).slice(0, 3);
     const enOf = x => x.long === 'suyo' ? (long ? 'his / hers / theirs / yours' : 'his / her / their / your') : (long ? x.enLong : x.en);
     return {
       kicker: 'My & mine', prompt, hint, answer,
-      options: shuffle([answer].concat(wrong)),
+      options: someOptions(answer, pool),
       why(chosen) {
         if (long && P.some(x => x.short && x.short.includes(chosen))) {
           return `<b>${chosen}</b> only goes right before a noun, like <b>${chosen} ${noun}</b>. ${WORDS.possLongRule}`;
@@ -1271,14 +1436,67 @@
     };
   }
 
+  // What a short owner word means: mis → my.
+  function possWordEn(f) {
+    return /^mis?$/.test(f) ? 'my' : /^tus?$/.test(f) ? 'your (friend)' : /^sus?$/.test(f) ? 'his / her / their / your (polite)' : 'our';
+  }
+  const SU_NOTE = ' <b>Su</b> can mean his, her, their or your (polite).';
+
+  // "mis llaves" → my keys / my key / your keys / our keys…
+  function possMeaning(n, plural) {
+    const OWN = [['mi', 'my'], ['tu', 'your (friend)'], ['su', 'his / her / their'], ['nuestro', 'our']];
+    const esOf = (w, pl) => `${w === 'nuestro' ? agree(w, nounKind(n, pl)) : w + (pl ? 's' : '')} ${pl ? n[1] : n[0]}`;
+    const enOf = (w, pl) => `${OWN.find(x => x[0] === w)[1]} ${pl ? n[4] : n[3]}`;
+    const own = pick(OWN)[0], es = esOf(own, plural), answer = enOf(own, plural);
+    const esFor = {};
+    OWN.forEach(([w]) => [false, true].forEach(pl => { esFor[enOf(w, pl)] = esOf(w, pl); }));
+    const rest = shuffle(OWN.filter(x => x[0] !== own));
+    const wrong = [enOf(own, !plural)].concat(rest.map(x => enOf(x[0], plural)), rest.map(x => enOf(x[0], !plural)));
+    const note = own === 'su' ? SU_NOTE : '';
+    return {
+      kicker: 'My & mine · what does it mean?', wide: true, prompt: es, promptLang: 'es', hint: 'Pick the English.',
+      answer, options: someOptions(answer, wrong),
+      why: chosen => `"${chosen}" would be <b>${esFor[chosen]}</b>. <b>${es}</b> is "${answer}": ${plural ? 'more than one' : 'just one'}.${note}`,
+      explain: `<b>${es}</b> = "${answer}".${note}`,
+      table: possTable(own === 'mi' ? 'mío' : own === 'tu' ? 'tuyo' : own === 'su' ? 'suyo' : 'nuestro'),
+      say: es,
+    };
+  }
+
+  // "her keys" → sus llaves / su llaves / mis llaves / sus llave…
+  function possToSpanish(o, n, plural) {
+    const P = WORDS.possessives, k = nounKind(n, plural), noun = plural ? n[1] : n[0], other = plural ? n[0] : n[1];
+    const en = `${o.en} ${plural ? n[4] : n[3]}`, mine = shortPoss(o, k), answer = `${mine} ${noun}`;
+    const owners = shuffle([...new Set(P.map(x => shortPoss(x, k)))].filter(f => f !== mine)).map(f => `${f} ${noun}`);
+    const wrong = [`${shortPoss(o, k ^ 2)} ${noun}`].concat(o.short ? [] : [`${agree(o.long, k ^ 1)} ${noun}`],
+      owners.slice(0, 2), `${shortPoss(o, k ^ 2)} ${other}`, owners.slice(2));
+    const note = o.long === 'suyo' ? SU_NOTE : '';
+    return {
+      kicker: 'My & mine · say it in Spanish', wide: true, prompt: `"${cap(en)}"`, promptLang: 'en', hint: 'Pick the Spanish.',
+      answer, options: someOptions(answer, wrong),
+      why(chosen) {
+        const [f, ...rest] = chosen.split(' '), cn = rest.join(' ');
+        if (cn !== noun) return `<b>${chosen}</b> is "${[0, 1, 2, 3].some(i => shortPoss(o, i) === f) ? o.en : possWordEn(f)} ${plural ? n[3] : n[4]}". You need ${plural ? 'more than one' : 'just one'}: <b>${answer}</b>.`;
+        if ([0, 1, 2, 3].some(i => shortPoss(o, i) === f)) {
+          return `<b>${f}</b> doesn't match. <b>${noun}</b> is ${KIND[k]} (${ARTICLE[k]} ${noun}), so: <b>${answer}</b>.${n[5] ? ` ${n[5]}` : ''}`;
+        }
+        return `<b>${f}</b> means "${possWordEn(f)}". "${en}" is <b>${answer}</b>.${note}`;
+      },
+      explain: `"${en}" = <b>${answer}</b>.${note}`,
+      table: possTable(o.long),
+      say: answer,
+    };
+  }
+
   // ---------- topic drills: colors, numbers, time, dates, boy / girl words (lists in topics.js) ----------
   function refRows(rows, hl) {
     return `<div class="conj">${rows.map(([a, b]) => `<div class="conj-row${a === hl ? ' hl' : ''}">
       <span class="p">${b}</span><b>${a === hl ? `<em>${a}</em>` : a}</b>${spk(a)}</div>`).join('')}</div>`;
   }
-  // Up to four different options: the answer first, then the wrong ones that aren't repeats.
-  function fourOptions(answer, wrong) {
-    return shuffle([answer].concat([...new Set(wrong)].filter(w => w && w !== answer).slice(0, 3)));
+  // 4 to 6 different options (fewer if there aren't enough wrong ones): the answer, then wrong ones that aren't repeats.
+  function someOptions(answer, wrong) {
+    const n = 3 + Math.floor(Math.random() * 3);
+    return shuffle([answer].concat([...new Set(wrong)].filter(w => w && w !== answer).slice(0, n)));
   }
 
   const COLOR_KINDS = ['m', 'f', 'mp', 'fp'];
@@ -1292,7 +1510,7 @@
     if (kind === 'say') {
       return {
         kicker: 'Colors', prompt: 'Es ___.', hint: `"It's ${c[1]}."`, answer: c[0],
-        options: fourOptions(c[0], shuffle(C.filter(x => x !== c)).map(x => x[0])),
+        options: someOptions(c[0], shuffle(C.filter(x => x !== c)).map(x => x[0])),
         why: chosen => `<b>${chosen}</b> is ${C.find(x => x[0] === chosen)[1]}. ${c[1]} is <b>${c[0]}</b>.`,
         explain: `<b>${c[0]}</b> = ${c[1]}.`, table, say: `Es ${c[0]}.`,
       };
@@ -1300,7 +1518,7 @@
     if (kind === 'read') {
       return {
         kicker: 'Colors', prompt: `${c[0]} = ___`, hint: 'What color is it in English?', answer: c[1],
-        options: fourOptions(c[1], shuffle(C.filter(x => x !== c)).map(x => x[1])),
+        options: someOptions(c[1], shuffle(C.filter(x => x !== c)).map(x => x[1])),
         why: chosen => `${chosen} is <b>${C.find(x => x[1] === chosen)[0]}</b>. <b>${c[0]}</b> is ${c[1]}.`,
         explain: `<b>${c[0]}</b> = ${c[1]}.`, table, say: c[0],
       };
@@ -1315,7 +1533,7 @@
       : `<b>${c[0]}</b> doesn't change for boy / girl, only for more than one: <b>${c[3]}</b>. Here it's ${plural ? 'more than one' : 'just one'}: <b>${answer}</b>.`;
     return {
       kicker: 'Colors · make it match', prompt: `${ARTICLE[k]} ${noun} ___`, hint: `"the ${c[1]} ${nEn}"`, answer,
-      options: fourOptions(answer, wrong.concat(others)),
+      options: someOptions(answer, wrong.concat(others)),
       why: chosen => C.some(x => x !== c && [0, 1, 2, 3].some(i => colorForm(x, i) === chosen))
         ? `<b>${chosen}</b> is a different color. ${c[1]} is <b>${c[0]}</b>. ${rule}`
         : rule,
@@ -1373,7 +1591,7 @@
       return {
         kicker: price ? 'Numbers · prices' : 'Numbers', wide: true,
         prompt: price ? `$${n} = ___ dólares` : `${n} = ___`, hint: price ? 'How do you say the price?' : 'Pick the Spanish.',
-        answer, options: fourOptions(answer, near.map(words)),
+        answer, options: someOptions(answer, near.map(words)),
         why: chosen => `<b>${chosen}</b> is ${byWord[chosen]}. ${n} is <b>${answer}</b>.`,
         explain: `${n} = <b>${answer}</b>.${price && /un$/.test(answer) ? ' <b>Uno</b> becomes <b>un</b> before a noun like dólares.' : ''}`,
         table, say: price ? `${answer} dólares` : answer,
@@ -1384,7 +1602,7 @@
     return {
       kicker: kind === 'listen' ? 'Numbers · listen' : 'Numbers', listen: kind === 'listen' ? words : null,
       prompt: kind === 'listen' ? '' : `${words} = ___`, hint: kind === 'listen' ? 'What number do you hear?' : 'Pick the number.',
-      answer, options: fourOptions(answer, near.map(String)),
+      answer, options: someOptions(answer, near.map(String)),
       why: chosen => `<b>${chosen}</b> is <b>${numberEs(+chosen)}</b>. You ${kind === 'listen' ? 'heard' : 'have'} <b>${words}</b> = ${n}.`,
       explain: `<b>${words}</b> = ${n}.`, table, say: words,
     };
@@ -1404,10 +1622,11 @@
     if (kind === 'say') {
       const other = h === 1 ? `Son las una${MINUTES[m] ? ` ${MINUTES[m]}` : ''}` : `Es la ${HOURS[h]}${MINUTES[m] ? ` ${MINUTES[m]}` : ''}`;
       const swapMin = { 15: 45, 45: 15, 30: 15, 0: 30, 5: 50, 50: 5, 10: 20, 20: 10, 40: 30 }[m];
-      const wrongs = [other, timeEs(h, swapMin), timeEs(h % 12 + 1, m)];
+      const otherMin = shuffle(Object.keys(MINUTES).map(Number).filter(x => x !== m && x !== swapMin));
+      const wrongs = [other, timeEs(h, swapMin), timeEs(h % 12 + 1, m), timeEs(h === 1 ? 12 : h - 1, m), timeEs(h, otherMin[0]), timeEs(h % 12 + 1, swapMin)];
       return {
         kicker: 'Time', wide: true, prompt: '¿Qué hora es? ___.', hint: `🕒 It's ${clock(h, m)}.`, answer,
-        options: fourOptions(answer, wrongs),
+        options: someOptions(answer, wrongs),
         why: chosen => chosen === other
           ? (h === 1 ? 'One o\'clock is just one hour, so it\'s <b>Es la una</b>.' : `<b>Es la</b> is only for one o'clock (la una). For every other hour, say <b>Son las</b>: <b>${answer}</b>.`)
           : `<b>${chosen}</b> is a different time. ${clock(h, m)} is <b>${answer}</b>.`,
@@ -1415,8 +1634,10 @@
       };
     }
     if (kind === 'read') {
-      const wrongs = [clock(h, { 15: 45, 45: 15, 30: 15, 0: 30, 5: 50, 50: 5, 10: 20, 20: 10, 40: 30 }[m]), clock(h % 12 + 1, m), clock(h === 1 ? 12 : h - 1, m)];
-      const opts = fourOptions(clock(h, m), wrongs);
+      const swap = { 15: 45, 45: 15, 30: 15, 0: 30, 5: 50, 50: 5, 10: 20, 20: 10, 40: 30 }[m];
+      const otherMin = shuffle(Object.keys(MINUTES).map(Number).filter(x => x !== m && x !== swap));
+      const wrongs = [clock(h, swap), clock(h % 12 + 1, m), clock(h === 1 ? 12 : h - 1, m), clock(h, otherMin[0]), clock(h % 12 + 1, swap)];
+      const opts = someOptions(clock(h, m), wrongs);
       return {
         kicker: 'Time', prompt: `${answer}. → ___`, hint: 'What time is it?', answer: clock(h, m), options: opts,
         why: chosen => `<b>${chosen}</b> would be "${timeEs(+chosen.split(':')[0], +chosen.split(':')[1]).toLowerCase()}". <b>${answer}</b> is ${clock(h, m)}.`,
@@ -1428,7 +1649,7 @@
       return {
         kicker: 'Time · at what time?', prompt: `La cita es ___ ${HOURS[h]}${MINUTES[m] ? ` ${MINUTES[m]}` : ''}.`,
         hint: `"The appointment is at ${clock(h, m)}."`, answer: right,
-        options: fourOptions(right, h === 1 ? ['a las', 'en la', 'la'] : ['a la', 'en las', 'las']),
+        options: someOptions(right, h === 1 ? ['a las', 'en la', 'la', 'en las', 'de la'] : ['a la', 'en las', 'las', 'en la', 'de las']),
         why: chosen => `"At" a time is <b>a la</b> (one o'clock) or <b>a las</b> (every other hour). Not <b>en</b>.`,
         explain: `At ${clock(h, m)} → <b>${timeEs(h, m, true)}</b>.`, table, say: `La cita es ${timeEs(h, m, true)}.`,
       };
@@ -1437,7 +1658,7 @@
     const ampm = part[0] === 'de la mañana' ? 'AM' : 'PM';
     return {
       kicker: 'Time · morning or night?', wide: true, prompt: `${timeEs(ph, 0)} ___.`, hint: `🕒 ${ph}:00 ${ampm}`,
-      answer: part[0], options: fourOptions(part[0], WORDS.timeParts.map(p => p[0])),
+      answer: part[0], options: someOptions(part[0], WORDS.timeParts.map(p => p[0])),
       why: () => `${ph}:00 ${ampm} is ${part[1]}: <b>${part[0]}</b>.`,
       explain: `${ph}:00 ${ampm} → <b>${part[0]}</b> (${part[1]}).`, table, say: `${timeEs(ph, 0)} ${part[0]}.`,
     };
@@ -1451,7 +1672,7 @@
       const d = pick(D);
       return {
         kicker: 'Dates · days', prompt: 'Hoy es ___.', hint: `"Today is ${d[1]}."`, answer: d[0],
-        options: fourOptions(d[0], shuffle(D.filter(x => x !== d)).map(x => x[0])),
+        options: someOptions(d[0], shuffle(D.filter(x => x !== d)).map(x => x[0])),
         why: chosen => `<b>${chosen}</b> is ${D.find(x => x[0] === chosen)[1]}. ${d[1]} is <b>${d[0]}</b>.`,
         explain: `<b>${d[0]}</b> = ${d[1]}. No capital letter in Spanish.`, table: refRows(D, d[0]), say: `Hoy es ${d[0]}.`,
       };
@@ -1460,7 +1681,7 @@
       const mo = pick(M);
       return {
         kicker: 'Dates · months', prompt: 'Mi cumpleaños es en ___.', hint: `"My birthday is in ${mo[1]}."`, answer: mo[0],
-        options: fourOptions(mo[0], shuffle(M.filter(x => x !== mo)).map(x => x[0])),
+        options: someOptions(mo[0], shuffle(M.filter(x => x !== mo)).map(x => x[0])),
         why: chosen => `<b>${chosen}</b> is ${M.find(x => x[0] === chosen)[1]}. ${mo[1]} is <b>${mo[0]}</b>.`,
         explain: `<b>${mo[0]}</b> = ${mo[1]}.`, table: refRows(M, mo[0]), say: `Mi cumpleaños es en ${mo[0]}.`,
       };
@@ -1472,7 +1693,7 @@
       const wrongs = [`el ${mo[0]} ${numberEs(d)}`, `en ${answer}`, dateEs(d, other), d === 1 ? `el uno ${mo[0]}` : dateEs(nearNumbers(d).find(x => x > 1 && x < 29) || d + 1, mo)];
       return {
         kicker: 'Dates', wide: true, prompt: 'La cita es ___.', hint: `"The appointment is on ${mo[1]} ${d}."`, answer,
-        options: fourOptions(answer, wrongs),
+        options: someOptions(answer, wrongs),
         why: chosen => chosen.startsWith(`el ${mo[0]}`)
           ? `Spanish says the day first: <b>el + number + de + month</b>: <b>${answer}</b>.`
           : chosen.startsWith('en ')
@@ -1487,7 +1708,7 @@
       const day = every && !/s$/.test(d[0]) ? `${d[0]}s` : d[0];
       return {
         kicker: 'Dates · on Monday', prompt: `Trabajo ___ ${day}.`, hint: every ? `"I work on ${d[1]}s (every week)."` : `"I work on ${d[1]} (this week)."`,
-        answer, options: fourOptions(answer, ['el', 'los', 'en', 'en el']),
+        answer, options: someOptions(answer, ['el', 'los', 'en', 'en el']),
         why: chosen => chosen.startsWith('en')
           ? `"On" a day is not <b>en</b>. It's just <b>el ${d[0]}</b> (this one) or <b>los ${day}</b> (every week).`
           : every ? `Every week = <b>los ${day}</b>.` : `One day this week = <b>el ${d[0]}</b>. <b>Los</b> would mean every ${d[1]}.`,
@@ -1497,7 +1718,7 @@
     const W = WORDS.whenWords, w = pick(W);
     return {
       kicker: 'Dates · when?', wide: true, prompt: 'Vamos ___.', hint: `"We're going ${w[1]}."`, answer: w[0],
-      options: fourOptions(w[0], shuffle(W.filter(x => x !== w)).map(x => x[0])),
+      options: someOptions(w[0], shuffle(W.filter(x => x !== w)).map(x => x[0])),
       why: chosen => `<b>${chosen}</b> means ${W.find(x => x[0] === chosen)[1]}. ${cap(w[1])} is <b>${w[0]}</b>.`,
       explain: `<b>${w[0]}</b> = ${w[1]}.`, table: refRows(W, w[0]), say: `Vamos ${w[0]}.`,
     };
@@ -1700,7 +1921,7 @@
     wireTop();
     if (q.listen) setTimeout(() => say(q.listen), 250);
     const stage = app.querySelector('.stage'), foot = app.querySelector('.foot');
-    const hw = watchHints(stage, [['.prompt', 'es'], ['.hint', 'en']]);
+    const hw = watchHints(stage, [['.prompt', q.promptLang || 'es'], ['.hint', 'en']]);
     stage.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
       const chosen = q.options[+b.dataset.k];
       const ok = chosen === q.answer;
