@@ -604,7 +604,7 @@
     audio.pause();
     if (clipBtn) { clipBtn.classList.remove('playing'); clipBtn.textContent = '▶'; clipBtn = null; }
   }
-  function stop() { stopClip(); stopPlayer(); }
+  function stop() { keepSpot(); stopClip(); stopPlayer(); }
   function playClip(book, t, secs, btn) {
     const same = clipBtn === btn;
     stopClip();
@@ -720,6 +720,7 @@
     // unplugging) is a real pause, so the player stops there. A stall gets a nudge.
     let lastT = -1, still = 0, kicks = 0, ready = false;
     const giveUp = () => {
+      keepSpot();
       stopPlayer();
       drawNow();
       const msg = ctx && ctx.app.querySelector('.bk-status');
@@ -730,8 +731,11 @@
       const left = (end - el.currentTime) / (el.playbackRate || 1);
       if (left <= 0.03 || el.ended) {
         el.pause();
-        if (to > partEnd + 0.05) playSegment(lang, partEnd, to, token, done);
-        else done();
+        if (to > partEnd + 0.05) {
+          P.now = null;
+          P.from = partEnd;
+          playSegment(lang, partEnd, to, token, done);
+        } else done();
         return;
       }
       if (el.paused) {
@@ -759,6 +763,7 @@
       el.playbackRate = rate;
       if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = Math.max(0, local);
       P.now = () => part.offset + el.currentTime; // where this language is right now, in book time
+      P.from = null;
       // if the phone says no, try a few more times before asking him to tap ▶
       const tryPlay = n => el.play().then(watch, () => {
         if (!P || token !== P.token) return;
@@ -799,24 +804,52 @@
     set('stop', () => { if (P && P.playing) togglePlay(); });
     set('nexttrack', () => { if (P) { stopPlayer(); advance(); } });
     set('previoustrack', () => { if (P) backChunk(); });
+    set('seekbackward', d => { if (P) seekBy(-(d.seekOffset || 30)); });
+    set('seekforward', d => { if (P) seekBy(d.seekOffset || 30); });
   }
 
   function needsMatch(i) {
     const st = bookState();
     return i > 0 && st.anchors[i] == null && !st.skipped[i];
   }
-  // Saves the spot: the chunk, which language of it, and how far into that language.
+  // Where the player is right now: the step in the play order, its language, and the book time.
+  function spotNow() {
+    const seq = P.seq.length ? P.seq : seqFor(P.chunk);
+    const step = !P.playing && P.resume && seq[P.resume.step] ? P.resume.step : P.step < seq.length ? P.step : 0;
+    const s = seq[step];
+    let t = s.range[0];
+    if (P.playing && P.now) t = P.now();
+    else if (P.playing && P.from != null) t = P.from; // still loading
+    else if (P.resume && P.resume.step === step) t = P.resume.t;
+    return { step, lang: s.lang, t };
+  }
+  // Seconds into the chapter, on the first book's clock.
+  function chapterTime(s) {
+    return (s.lang === pair.dLang ? s.t : sameSpot(P.al, s.lang, s.t).d) - P.al.dS;
+  }
+  // Saves the spot: the whole chunk, which language of it, and how far into that language.
   function savePos() {
     if (!P) return;
-    const c = P.chunk, s = P.seq[P.step];
-    const pos = { i: P.i, d: c.d0, f: c.f0, step: P.step };
-    if (P.playing && s && P.now) pos.t = P.now();
-    else if (P.resume) Object.assign(pos, { step: P.resume.step, t: P.resume.t });
+    const c = P.chunk, s = spotNow();
+    const pos = { i: P.i, d: c.d0, f: c.f0, d1: c.d1, f1: c.f1, last: !!c.last, step: s.step, lang: s.lang, t: s.t, at: chapterTime(s) };
     updateBook(b => { b.pos = pos; });
   }
-  setInterval(() => { if (P && P.playing) savePos(); }, 5000);
+  // For leaving the player: holds the second it's at, so the save and the next ▶ both use it.
+  function keepSpot() {
+    if (!P) return;
+    if (P.playing) { const s = spotNow(); P.resume = { step: s.step, t: s.t }; }
+    savePos();
+  }
+  // Saves every few seconds of audio (these events keep coming with the screen off, when timers
+  // slow down), when the phone pauses it, and when the app is hidden or closed.
+  let lastSave = 0;
+  player.addEventListener('timeupdate', () => {
+    if (P && P.playing && Date.now() - lastSave > 3000) { lastSave = Date.now(); savePos(); }
+  });
+  player.addEventListener('pause', () => { if (P && P.playing) savePos(); });
   setInterval(() => { if (P && P.playing) drawNow(); }, 1000); // keeps the time and bar moving
   document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
+  window.addEventListener('pagehide', () => savePos());
 
   // Opens the player at section i (at driver time d if given, or a saved spot), first asking
   // for the chapter match if it's missing.
@@ -839,14 +872,15 @@
     const startD = d != null && d > al.dS + 0.5 && d < al.dE - 0.5 ? d : al.dS;
     const startF = startD === al.dS ? al.fS : spot && spot.f != null ? spot.f : snapTo(al.b, mapThrough(al.points, startD), 1.5);
     P = { i, al, token: 0, timer: 0, playing: false, step: 0, seq: [], n: 1, history: [], lastBack: 0, extra: -1 };
-    P.chunk = nextChunk(al, startD, startF, settings().size);
-    // back where he left off: the same chunk, the same language, the same second
+    // back where he left off: the same chunk (even if the length setting changed since), the same language, the same second
+    const saved = spot && spot.d1 > spot.d && spot.f1 > spot.f && spot.d1 <= al.dE + 1;
+    P.chunk = saved ? { d0: spot.d, f0: spot.f, d1: spot.d1, f1: spot.f1, last: spot.last } : nextChunk(al, startD, startF, settings().size);
     if (spot && spot.step != null) {
       P.seq = seqFor(P.chunk);
-      const s = P.seq[spot.step];
+      const k = spot.lang ? stepFor(spot.lang, spot.step) : spot.step, s = P.seq[k];
       if (s) {
-        P.step = spot.step;
-        if (spot.t != null && spot.t > s.range[0] + 1 && spot.t < s.range[1] - 1) P.resume = { step: spot.step, t: spot.t };
+        P.step = k;
+        if (spot.t != null && spot.t > s.range[0] + 0.5 && spot.t < s.range[1] - 0.5) P.resume = { step: k, t: spot.t };
       }
     }
     drawPlayer();
@@ -857,6 +891,48 @@
   function seqFor(chunk) {
     const order = manual() ? (settings().manualLang || 'en') : settings().order;
     return order.split('-').map(lang => ({ lang, range: rangeOf(chunk, lang) }));
+  }
+  // The step of the play order in this language: the one given if it fits, else the first,
+  // else one added on the end (⇄ can leave a one-language order).
+  function stepFor(lang, preferred) {
+    if (P.seq[preferred] && P.seq[preferred].lang === lang) return preferred;
+    const k = P.seq.findIndex(x => x.lang === lang);
+    if (k >= 0) return k;
+    P.seq.push({ lang, range: rangeOf(P.chunk, lang) });
+    return P.seq.length - 1;
+  }
+
+  // Goes to book time t in one language, staying in that language. Playing keeps playing, paused
+  // stays paused. Inside this chunk only the spot moves; outside it, a new chunk starts there.
+  function seekTo(lang, t) {
+    const al = P.al, [lo, hi] = lang === pair.dLang ? [al.dS, al.dE] : [al.fS, al.fE];
+    if (t >= hi - 1) {
+      if (P.i + 1 < pair.sections.length) return openPlayer(P.i + 1, null, P.playing);
+      t = hi - 2; // the book's last chapter: stop short of the end
+    }
+    t = Math.max(lo, t);
+    const playing = P.playing;
+    if (!P.seq.length) P.seq = seqFor(P.chunk);
+    const k = spotNow().step, r = P.seq[k].range;
+    if (t >= r[0] && t < r[1] - 0.5) {
+      P.step = k;
+      P.resume = { step: k, t };
+    } else {
+      const spot = sameSpot(al, lang, t);
+      if (t > r[0]) { P.history.push(P.chunk); P.n++; } else { P.history = []; P.n = Math.max(1, P.n - 1); }
+      P.chunk = nextChunk(al, spot.d, spot.f, settings().size);
+      P.seq = seqFor(P.chunk);
+      P.extra = -1;
+      P.resume = null;
+      P.step = stepFor(lang, 0);
+    }
+    if (playing) return runChunk(P.step, true);
+    savePos();
+    drawNow();
+  }
+  function seekBy(secs) {
+    const s = spotNow();
+    seekTo(s.lang, s.t + secs);
   }
 
   // ⇄: jumps to the same spot in the other language right now.
@@ -898,12 +974,15 @@
     if (!P || token !== P.token) return;
     const s = P.seq[P.step];
     if (!s) return advance();
-    P.now = null; // set again once the next language starts
-    drawNow();
     const from = P.resume && P.resume.step === P.step ? P.resume.t : s.range[0];
     P.resume = null;
+    P.now = null; // set again once the next language starts
+    P.from = from;
+    drawNow();
     playSegment(s.lang, from, s.range[1], token, () => {
       P.step++;
+      P.now = null;
+      P.from = null;
       P.timer = setTimeout(() => playStep(token), 450);
     });
   }
@@ -921,16 +1000,25 @@
     const select = (key, list) => `<label>${LABELS[key]}
       <select data-k="${key}">${list.map(([v, label]) => `<option value="${v}"${st[key] === v ? ' selected' : ''}>${label}</option>`).join('')}</select></label>`;
     const stage = ctx.app.querySelector('.stage'), foot = ctx.app.querySelector('.foot');
+    const word = pair.made ? 'Part' : 'Chapter';
     stage.innerHTML = `
       <p class="kicker center">${esc(pair.title)}</p>
       <h2 class="center bk-title">${esc(pair.sections[P.i].title)}</h2>
       <div class="bk-seq"></div>
       <p class="center small bk-where"></p>
-      <div class="bar bk-bar"><i></i></div>
+      <input type="range" class="bk-slider" min="0" max="${Math.round(P.al.dE - P.al.dS)}" step="1" value="0" aria-label="Move through the ${word.toLowerCase()}">
       <div class="bk-controls">
-        <button class="bk-c bk-back" aria-label="Back">⏮</button>
+        <button class="bk-c bk-back" aria-label="Start of this chunk">⏮</button>
+        <button class="bk-c bk-seek" data-secs="-30" aria-label="Back 30 seconds">−30s</button>
         <button class="bk-c main bk-main" aria-label="Play">▶</button>
-        <button class="bk-c bk-next" aria-label="Next">⏭</button>
+        <button class="bk-c bk-seek" data-secs="30" aria-label="Ahead 30 seconds">+30s</button>
+        <button class="bk-c bk-next" aria-label="Next chunk">⏭</button>
+      </div>
+      <div class="bk-jumps">
+        <button class="bk-prev-ch"${P.i ? '' : ' disabled'}>◀ ${word}</button>
+        <button class="bk-seek" data-secs="-300">−5 min</button>
+        <button class="bk-seek" data-secs="300">+5 min</button>
+        <button class="bk-next-ch"${P.i + 1 < pair.sections.length ? '' : ' disabled'}>${word} ▶</button>
       </div>
       <p class="center bk-status"></p>
       <button class="btn bk-switch">⇄ Switch to Spanish</button>
@@ -946,6 +1034,19 @@
     stage.querySelector('.bk-main').addEventListener('click', togglePlay);
     stage.querySelector('.bk-next').addEventListener('click', () => { stopPlayer(); advance(); });
     stage.querySelector('.bk-back').addEventListener('click', backChunk);
+    stage.querySelectorAll('.bk-seek').forEach(b => b.addEventListener('click', () => seekBy(+b.dataset.secs)));
+    stage.querySelector('.bk-prev-ch').addEventListener('click', () => openPlayer(P.i - 1, null, P.playing));
+    stage.querySelector('.bk-next-ch').addEventListener('click', () => openPlayer(P.i + 1, null, P.playing));
+    const slider = stage.querySelector('.bk-slider');
+    slider.addEventListener('input', () => {
+      P.dragging = true;
+      stage.querySelector('.bk-where').textContent = `Go to ${fmt(+slider.value)} of ${fmt(P.al.dE - P.al.dS)}`;
+    });
+    slider.addEventListener('change', () => {
+      P.dragging = false;
+      const d = P.al.dS + +slider.value, { lang } = spotNow();
+      seekTo(lang, lang === pair.dLang ? d : sameSpot(P.al, pair.dLang, d).f);
+    });
     setSessionButtons();
     stage.querySelector('.bk-again').addEventListener('click', spanishAgain);
     stage.querySelector('.bk-switch').addEventListener('click', switchNow);
@@ -1061,11 +1162,12 @@
     const cur = (seq[P.step] || seq[0]).lang;
     stage.querySelector('.bk-switch').textContent = `⇄ Switch to ${cur === 'en' ? 'Spanish' : 'English'}`;
     const al = P.al, c = P.chunk;
-    // where he is in the chapter: live while playing, else the start of the chunk
-    let dNow = c.d0;
-    if (P.playing && P.now && seq[P.step]) { const t = P.now(); dNow = cur === pair.dLang ? t : sameSpot(al, cur, t).d; }
-    stage.querySelector('.bk-where').textContent = `${isManual ? '' : `Chunk ${P.n} · `}${fmt(dNow - al.dS)} of ${fmt(al.dE - al.dS)}`;
-    stage.querySelector('.bk-bar i').style.width = `${Math.min(100, 100 * (dNow - al.dS) / Math.max(1, al.dE - al.dS))}%`;
+    // where he is in the chapter (left alone while he's dragging the slider)
+    if (!P.dragging) {
+      const now = chapterTime(spotNow());
+      stage.querySelector('.bk-where').textContent = `${isManual ? '' : `Chunk ${P.n} · `}${fmt(now)} of ${fmt(al.dE - al.dS)}`;
+      stage.querySelector('.bk-slider').value = Math.round(now);
+    }
     const main = stage.querySelector('.bk-main');
     main.textContent = P.playing ? '⏸' : '▶';
     main.setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
@@ -1117,10 +1219,10 @@
   }
 
   function showFinished() {
-    updateBook(b => { delete b.pos; });
     render('Books', `<div class="big-emoji">🏁</div><h2 class="center">¡Terminaste el libro!</h2>
       <p class="center">You finished <b>${esc(pair.title)}</b> in two languages. That's a lot of Spanish.</p>`,
       '<button class="btn">Back to the book</button>', showBook);
+    updateBook(b => { delete b.pos; });
     ctx.app.querySelector('.foot .btn').addEventListener('click', showBook);
   }
 
@@ -1323,24 +1425,27 @@
     const done = pair.sections.filter((s, i) => i === 0 || st.anchors[i] != null).length;
     const pos = st.pos && st.pos.i < n ? st.pos : null;
     const word = pair.made ? 'Part' : 'Chapter';
+    const spotText = pos ? [pos.at != null ? fmt(pos.at) : '', pos.lang ? LANG[pos.lang] : ''].filter(Boolean).join(' · ') : '';
+    const resume = () => openPlayer(pos ? pos.i : 0, pos ? pos.d : null, true, pos);
     render('Books', `
       <h2 class="center bk-title">${esc(pair.title)}</h2>
       <p class="center small">English ${fmt(pair.en.duration)} · Spanish ${fmt(pair.es.duration)} · ${n} ${pair.made ? 'parts' : 'chapters'}</p>
+      <button class="btn bk-listen">🎧 ${pos ? `Keep listening<small>${word} ${pos.i + 1}${spotText ? ` · ${spotText}` : ''}</small>` : 'Start listening'}</button>
       <div class="trick">🎯 <b>Chapter matching: ${done} of ${n}</b><br>
         When a new ${word.toLowerCase()} starts, you pick where it starts in ${LANG[pair.fLang]} from a few spots. It keeps the two books in step. Tap 🎯 to fix one.</div>
       <div class="rows">${pair.sections.map((s, i) => `
         <div class="bk-row${pos && pos.i === i ? ' bk-here' : ''}">
           <button class="row bk-ch" data-i="${i}"><span class="bk-num">${pos && pos.i === i ? '🎧' : i + 1}</span>
-            <span class="row-text"><b>${esc(s.title)}</b><small>${fmt(s.start)} · ${chapterStatus(i, st)}</small></span></button>
+            <span class="row-text"><b>${esc(s.title)}</b><small>${pos && pos.i === i ? `Keep listening${spotText ? ` · ${spotText}` : ''}` : `${fmt(s.start)} · ${chapterStatus(i, st)}`}</small></span></button>
           ${i ? `<button class="bk-rematch" data-i="${i}" aria-label="Match this ${word.toLowerCase()}">🎯</button>` : ''}
         </div>`).join('')}</div>`,
       `<p class="small center bk-keep"></p>
-       <button class="btn bk-listen">🎧 ${pos ? `Keep listening · ${word} ${pos.i + 1}` : 'Start listening'}</button>
        <button class="btn ghost bk-other">Pick other books</button>`);
     drawKeep();
-    ctx.app.querySelectorAll('.bk-ch').forEach(b => b.addEventListener('click', () => openPlayer(+b.dataset.i, null, true)));
+    // his own chapter picks up where he left off; any other starts from its beginning
+    ctx.app.querySelectorAll('.bk-ch').forEach(b => b.addEventListener('click', () => (pos && pos.i === +b.dataset.i ? resume() : openPlayer(+b.dataset.i, null, true))));
     ctx.app.querySelectorAll('.bk-rematch').forEach(b => b.addEventListener('click', () => showFinder(+b.dataset.i, 0, () => showBook())));
-    ctx.app.querySelector('.bk-listen').addEventListener('click', () => openPlayer(pos ? pos.i : 0, pos ? pos.d : null, true, pos));
+    ctx.app.querySelector('.bk-listen').addEventListener('click', resume);
     ctx.app.querySelector('.bk-other').addEventListener('click', () => { pair = null; picked = { en: null, es: null }; showPick(); });
   }
 
