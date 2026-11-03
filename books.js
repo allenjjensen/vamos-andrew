@@ -716,29 +716,48 @@
     const end = Math.min(to, partEnd) - part.offset;
     const url = urlOf(part);
     const rate = rateOf(lang);
-    // The watch checks twice a second. A pause the app didn't make (headphones, a call,
-    // unplugging) is a real pause, so the player stops there. A stall gets a nudge.
-    let lastT = -1, still = 0, kicks = 0, ready = false;
+    const auto = P.auto; // it started by itself at a switch, not from a tap
+    P.auto = false;
+    // The watch checks twice a second. A pause the app didn't make (a call, unplugging) is a
+    // real pause, so the player stops there, unless it comes right after a switch: then it's
+    // the phone, so ask again. His own buttons never get here (they come through togglePlay).
+    // A stall gets a nudge.
+    let lastT = -1, still = 0, kicks = 0, ready = false, over = false, tries = 0, began = 0;
+    const live = () => P && token === P.token && !over;
     const giveUp = () => {
+      bookLog('Gave up: the phone would not play');
       keepSpot();
       stopPlayer();
       drawNow();
       const msg = ctx && ctx.app.querySelector('.bk-status');
       if (msg) msg.textContent = 'The phone stopped the audio. Tap ▶ to keep going.';
     };
+    const finish = () => {
+      over = true;
+      clearTimeout(P.timer);
+      P.tick = P.onPause = null;
+      if (to > partEnd + 0.05) {
+        P.now = null;
+        P.from = partEnd;
+        P.auto = true;
+        playSegment(lang, partEnd, to, token, done);
+      } else done();
+    };
+    const askAgain = () => {
+      if (!auto || tries >= (document.hidden ? 10 : 4) || performance.now() - began > 8000) return false;
+      tries++;
+      bookLog(`The phone paused it after a switch. Asking again (${tries})`);
+      el.play().catch(() => {});
+      return true;
+    };
     const watch = () => {
-      if (!P || token !== P.token) return;
+      if (!live()) return;
       const left = (end - el.currentTime) / (el.playbackRate || 1);
-      if (left <= 0.03 || el.ended) {
-        el.pause();
-        if (to > partEnd + 0.05) {
-          P.now = null;
-          P.from = partEnd;
-          playSegment(lang, partEnd, to, token, done);
-        } else done();
-        return;
-      }
+      if (left <= 0.03 || el.ended) return finish();
       if (el.paused) {
+        if (askAgain()) { P.timer = setTimeout(watch, 600); return; }
+        if (tries) return giveUp();
+        bookLog('Paused from outside the app');
         P.resume = { step: P.step, t: part.offset + el.currentTime };
         stopPlayer();
         savePos();
@@ -757,18 +776,25 @@
       P.timer = setTimeout(watch, left > 0.8 ? Math.min(500, (left - 0.4) * 1000) : 25);
     };
     const start = () => {
-      if (!P || token !== P.token || ready) return;
+      if (!live() || ready) return;
       ready = true;
+      began = performance.now();
       el.defaultPlaybackRate = rate;
       el.playbackRate = rate;
       if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = Math.max(0, local);
       P.now = () => part.offset + el.currentTime; // where this language is right now, in book time
       P.from = null;
+      // The audio's own events keep coming with the screen off, when the watch's timers slow down.
+      P.tick = () => {
+        if (live() && (el.ended || (end - el.currentTime) / (el.playbackRate || 1) <= (document.hidden ? 0.3 : 0.03))) finish();
+      };
+      P.onPause = () => { if (live() && el.paused) askAgain(); };
       // if the phone says no, try a few more times before asking him to tap ▶
       const tryPlay = n => el.play().then(watch, () => {
-        if (!P || token !== P.token) return;
-        if (n >= 4) return giveUp();
-        setTimeout(() => { if (P && token === P.token) tryPlay(n + 1); }, 300 * (n + 1));
+        if (!live()) return;
+        bookLog(`The phone refused to play (${n + 1})`);
+        if (n >= (document.hidden ? 12 : 4)) return giveUp();
+        setTimeout(() => { if (live()) tryPlay(n + 1); }, 300 * (n + 1));
       });
       tryPlay(0);
     };
@@ -776,10 +802,23 @@
     else {
       el.addEventListener('loadedmetadata', start, { once: true });
       el.src = url;
+      // Asks to play in the same moment as the swap, not after the file loads: a phone can put
+      // a stopped app to sleep in between. start() moves to the right second before any sound.
+      el.play().catch(() => {});
       // if the file never reports in, try loading it once more
-      setTimeout(() => { if (!ready && P && token === P.token) { el.load(); } }, 4000);
+      setTimeout(() => { if (live() && !ready) { bookLog('The file was slow to load. Trying again'); el.load(); el.play().catch(() => {}); } }, 4000);
     }
     showSession();
+  }
+
+  // A short record of what the audio did, readable on the phone, because these problems only happen there.
+  const LOG = 'vamos-books-log';
+  function bookLog(msg) {
+    try {
+      const list = JSON.parse(localStorage.getItem(LOG) || '[]');
+      list.push(`${new Date().toLocaleTimeString()} ${document.hidden ? '[screen off] ' : ''}${msg}`);
+      localStorage.setItem(LOG, JSON.stringify(list.slice(-40)));
+    } catch (e) { /* not saved */ }
   }
 
   // ---------- headphone and lock-screen buttons ----------
@@ -844,11 +883,25 @@
   // slow down), when the phone pauses it, and when the app is hidden or closed.
   let lastSave = 0;
   player.addEventListener('timeupdate', () => {
+    if (P && P.tick) P.tick();
     if (P && P.playing && Date.now() - lastSave > 3000) { lastSave = Date.now(); savePos(); }
   });
-  player.addEventListener('pause', () => { if (P && P.playing) savePos(); });
+  player.addEventListener('ended', () => { if (P && P.tick) P.tick(); });
+  player.addEventListener('pause', () => {
+    if (!P || !P.playing) return;
+    savePos();
+    if (P.onPause) P.onPause();
+  });
   setInterval(() => { if (P && P.playing) drawNow(); }, 1000); // keeps the time and bar moving
-  document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return savePos();
+    // Back in the app with the audio stuck between files: carry on from there.
+    if (P && P.playing && player.paused && P.step < P.seq.length && !P.gap) {
+      bookLog('Found it stuck on coming back. Carrying on');
+      keepSpot();
+      runChunk(P.step, true);
+    }
+  });
   window.addEventListener('pagehide', () => savePos());
 
   // Opens the player at section i (at driver time d if given, or a saved spot), first asking
@@ -885,7 +938,7 @@
     }
     drawPlayer();
     if (i + 1 < pair.sections.length && !needsMatch(i + 1)) alignSection(i + 1).catch(() => {}); // get the next one ready
-    if (autoplay) runChunk(P.step, true); else savePos();
+    if (autoplay) { P.auto = autoplay === 'auto'; runChunk(P.step, true); } else savePos();
   }
 
   function seqFor(chunk) {
@@ -978,17 +1031,24 @@
     P.resume = null;
     P.now = null; // set again once the next language starts
     P.from = from;
+    P.gap = false;
     drawNow();
     playSegment(s.lang, from, s.range[1], token, () => {
       P.step++;
       P.now = null;
       P.from = null;
+      P.auto = true;
+      // With the screen off the next language starts right away: timers slow down, and a
+      // stopped app can get put to sleep. With it on, a short breath between languages.
+      if (document.hidden) { if (P.seq[P.step]) bookLog(`Switching to ${LANG[P.seq[P.step].lang]}`); return playStep(token); }
+      player.pause();
+      P.gap = true;
       P.timer = setTimeout(() => playStep(token), 450);
     });
   }
   function advance() {
     const c = P.chunk;
-    if (c.last) return openPlayer(P.i + 1, null, true);
+    if (c.last) return openPlayer(P.i + 1, null, 'auto');
     P.history.push(c);
     P.n++;
     P.chunk = nextChunk(P.al, c.d1, c.f1, settings().size);
@@ -1029,7 +1089,8 @@
         <p class="small center bk-nudge-msg"></p>
       </div>
       <div class="bk-settings">${select('size', SIZES)}${select('order', ORDERS)}${select('speedEn', SPEEDS)}${select('speed', SPEEDS)}
-        <p class="small center bk-set-msg"></p></div>`;
+        <p class="small center bk-set-msg"></p></div>
+      <details class="bk-log"><summary>Audio log (for when it stops by itself)</summary><p class="small"></p></details>`;
     foot.innerHTML = '';
     stage.querySelector('.bk-main').addEventListener('click', togglePlay);
     stage.querySelector('.bk-next').addEventListener('click', () => { stopPlayer(); advance(); });
@@ -1037,6 +1098,11 @@
     stage.querySelectorAll('.bk-seek').forEach(b => b.addEventListener('click', () => seekBy(+b.dataset.secs)));
     stage.querySelector('.bk-prev-ch').addEventListener('click', () => openPlayer(P.i - 1, null, P.playing));
     stage.querySelector('.bk-next-ch').addEventListener('click', () => openPlayer(P.i + 1, null, P.playing));
+    stage.querySelector('.bk-log').addEventListener('toggle', e => {
+      let list = [];
+      try { list = JSON.parse(localStorage.getItem(LOG) || '[]'); } catch (err) { /* nothing to show */ }
+      e.target.querySelector('p').innerHTML = list.length ? list.slice().reverse().map(esc).join('<br>') : 'Nothing has gone wrong yet.';
+    });
     const slider = stage.querySelector('.bk-slider');
     slider.addEventListener('input', () => {
       P.dragging = true;

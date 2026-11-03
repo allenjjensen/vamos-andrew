@@ -493,6 +493,8 @@ p.version-tag { margin: -4px 0 10px; }
 .bk-jumps button { padding: 10px 2px; border-radius: 12px; background: var(--card); border: 2px solid var(--line); font-size: .8rem; font-weight: 800; white-space: nowrap; }
 .bk-jumps button:disabled { opacity: .4; }
 .bk-listen small { display: block; font-size: .85rem; font-weight: 700; opacity: .9; }
+.bk-log { margin-top: 14px; color: var(--muted); font-size: .85rem; }
+.bk-log p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .bk-c.main:active { transform: translateY(2px); box-shadow: 0 3px 0 var(--brand-dark); }
 .bk-nudge { border: 2px dashed var(--line); border-radius: 16px; padding: 4px 12px 10px; margin-top: 14px; }
 .bk-nudge-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
