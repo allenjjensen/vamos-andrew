@@ -184,6 +184,7 @@
       <header class="home-head">
         <div class="logo">¡Hola, ${NAME}!</div>
         <p class="tagline">Spanish in 10 minutes a day</p>
+        ${save.gym100 ? `<p class="secret-badge gold">💯 100 in a row in the gym${save.gym100 > 1 ? ` ×${save.gym100}` : ''}</p>` : ''}
         ${(save.secrets || []).includes('chupacabra') ? '<p class="secret-badge">🐐 You met El Chupacabra</p>' : ''}
       </header>
       ${streakStrip(save)}
@@ -468,7 +469,7 @@
       formsOf(g, v).forEach((f, p) => addWord(es, f, `a form of <b>${v[0]}</b> (${v[1].replace(/ \(.*\)/, '')}): ${PERSON_EN[p]}, ${t.title.toLowerCase()}`));
     })));
     WORDS.nouns.forEach(n => { both(n[0], n[3]); both(n[1], n[4]); });
-    WORDS.gender.forEach(g => both(g[0], g[2]));
+    WORDS.gender.forEach(g => { both(g[0], g[2]); if (g[5] !== 'one') addWord(es, pluralOf(g[0]), enPlural(g[2])); });
     WORDS.colors.forEach(c => {
       both(c[0], c[1]); both(c[3], c[1]);
       if (c[2]) { both(c[0].replace(/o$/, 'a'), c[1]); both(c[3].replace(/os$/, 'as'), c[1]); }
@@ -553,6 +554,7 @@
     const found = lookup(word, span.closest('[data-wt]').dataset.wt);
     const live = found && hintWatch && hintWatch.open;
     if (live) hintWatch.used = true;
+    if (found) saveMyWord(word, found);
     span.classList.add('on');
     // Read out the Spanish side: the word itself, or the first plain Spanish answer for an English word.
     let sayIt = '';
@@ -1392,8 +1394,9 @@
     const plural = Math.random() < 0.4, k = nounKind(n, plural);
     const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
     const r = Math.random();
-    if (r < 0.3) return possMeaning(n, plural);
-    if (r < 0.6) return possToSpanish(o, n, plural);
+    if (r < 0.25) return possMeaning(n, plural);
+    if (r < 0.5) return possToSpanish(o, n, plural);
+    if (r < 0.65 && !n[6]) return possLongToSpanish(o, n, plural); // not for people: "the boss is mine"
     const long = Math.random() < 0.4;
     const isSu = o.long === 'suyo';
     const suNote = isSu ? ' <b>Su</b> can mean his, her, their or your (polite).' : '';
@@ -1463,6 +1466,33 @@
     };
   }
 
+  // "The truck is mine." → El camión es mío. / … es mía. / … es mi. / … es tuyo.
+  function possLongToSpanish(o, n, plural) {
+    const P = WORDS.possessives, k = nounKind(n, plural), noun = plural ? n[1] : n[0];
+    const lead = `${cap(ARTICLE[k])} ${noun} ${plural ? 'son' : 'es'}`;
+    const en = `The ${plural ? n[4] : n[3]} ${plural ? 'are' : 'is'} ${o.enLong}.`;
+    const mine = agree(o.long, k), answer = `${lead} ${mine}.`;
+    const LONG_EN = { 'mío': 'mine', 'tuyo': 'yours (friend)', 'suyo': 'his / hers / theirs / yours (polite)', 'nuestro': 'ours' };
+    const others = shuffle([...new Set(P.map(x => x.long))].filter(l => l !== o.long));
+    const wrong = [agree(o.long, k ^ 1), shortPoss(o, k), agree(o.long, k ^ 2), agree(others[0], k), agree(others[1], k), agree(others[2], k)]
+      .map(w => `${lead} ${w}.`);
+    const note = o.long === 'suyo' ? ' <b>Suyo</b> can mean his, hers, theirs or yours (polite).' : '';
+    return {
+      kicker: 'My & mine · say it in Spanish', wide: true, prompt: `"${en}"`, promptLang: 'en', hint: 'Pick the Spanish.',
+      answer, options: someOptions(answer, wrong),
+      why(chosen) {
+        const w = chosen.slice(lead.length + 1, -1);
+        if (P.some(x => x.short && x.short.includes(w))) return `<b>${w}</b> only goes right before a noun. ${WORDS.possLongRule}`;
+        const base = P.find(x => [0, 1, 2, 3].some(i => agree(x.long, i) === w)).long;
+        if (base !== o.long) return `<b>${w}</b> means "${LONG_EN[base]}". "${en}" is <b>${answer}</b>.${note}`;
+        return `<b>${w}</b> doesn't match. <b>${noun}</b> is ${KIND[k]} (${ARTICLE[k]} ${noun}), so: <b>${answer}</b>.${n[5] ? ` ${n[5]}` : ''}`;
+      },
+      explain: `"${en}" = <b>${answer}</b>. After <b>es / son</b> it's the long form, matching the thing.${note}`,
+      table: possTable(o.long),
+      say: answer,
+    };
+  }
+
   // "her keys" → sus llaves / su llaves / mis llaves / sus llave…
   function possToSpanish(o, n, plural) {
     const P = WORDS.possessives, k = nounKind(n, plural), noun = plural ? n[1] : n[0], other = plural ? n[0] : n[1];
@@ -1523,7 +1553,7 @@
         explain: `<b>${c[0]}</b> = ${c[1]}.`, table, say: c[0],
       };
     }
-    const n = pick(WORDS.nouns.filter(x => !x[5])), plural = Math.random() < 0.45, k = nounKind(n, plural);
+    const n = pick(WORDS.nouns.filter(x => !x[5] && !x[6])), plural = Math.random() < 0.45, k = nounKind(n, plural);
     const noun = plural ? n[1] : n[0], nEn = plural ? n[4] : n[3];
     const answer = colorForm(c, k);
     const wrong = c[2] ? [0, 1, 2, 3].filter(i => i !== k).map(i => colorForm(c, i)) : [colorForm(c, k ^ 2)];
@@ -1724,20 +1754,157 @@
     };
   }
 
+  // More than one: casa → casas, camión → camiones, luz → luces, lunes stays lunes.
+  function pluralOf(w) {
+    if (/[aeiouáéó]$/.test(w)) return w + 's';
+    if (/z$/.test(w)) return w.slice(0, -1) + 'ces';
+    if (/[^aeiouáéíóú]es$/.test(w) && w.length > 4) return w; // lunes, martes
+    return w.replace(/ó(?=n$)/, 'o').replace(/á(?=n$)/, 'a') + 'es';
+  }
+  // English plurals for the hints: pencil → pencils, city → cities, "glass (to drink from)" → "glasses (to drink from)".
+  function enPlural(e) {
+    if (/^stairs$/.test(e)) return e;
+    const one = w => w === 'half' ? 'halves' : /[^aeiou]y$/.test(w) ? w.slice(0, -1) + 'ies' : /(s|x|z|ch|sh)$/.test(w) ? w + 'es' : w + 's';
+    const [head, ...paren] = e.split(' (');
+    return head.split(', ').map(p => p.replace(/^(\S+)/, one)).join(', ') + (paren.length ? ' (' + paren.join(' (') : '');
+  }
+
+  // The, or a: el / la / los / las, or un / una / unos / unas. One or more than one.
   function genderQuestion() {
     const G = WORDS.gender;
     const tricky = G.filter(g => g[3] !== '-a ending' && g[3] !== '-o ending');
     const g = Math.random() < 0.6 ? pick(tricky) : pick(G);
-    const answer = g[1] === 'm' ? 'el' : 'la';
-    const why = g[4] || (g[1] === 'm' ? '-o ending: a boy word.' : '-a ending: a girl word.');
+    const boy = g[1] === 'm';
+    const many = g[5] !== 'one' && Math.random() < 0.35;
+    const indef = Math.random() < 0.4;
+    const set = indef ? ['un', 'una', 'unos', 'unas'] : ['el', 'la', 'los', 'las'];
+    const word = many ? pluralOf(g[0]) : g[0];
+    const answer = set[(boy ? 0 : 1) + (many ? 2 : 0)];
+    const why = g[4] || (boy ? '-o ending: a boy word.' : '-a ending: a girl word.');
+    const en = many ? `${indef ? 'some' : 'the'} ${enPlural(g[2])}` : `${indef ? (/^[aeiou]/i.test(g[2]) ? 'an' : 'a') : 'the'} ${g[2]}`;
     return {
-      kicker: 'Boy or girl word?', prompt: `___ ${g[0]}`, hint: `"the ${g[2]}"`, answer, options: ['el', 'la'],
-      why: () => `<b>${g[0]}</b> is a ${g[1] === 'm' ? 'boy' : 'girl'} word: <b>${answer} ${g[0]}</b>. ${why}`,
-      explain: `<b>${answer} ${g[0]}</b>. ${why}`, table: `<p class="small">${WORDS.genderRule}</p>`, say: `${answer} ${g[0]}`,
+      kicker: indef ? 'Boy or girl word? · a / some' : 'Boy or girl word?', prompt: `___ ${word}`, hint: `"${en}"`, answer, options: set.slice(),
+      why(chosen) {
+        const i = set.indexOf(chosen);
+        if ((i > 1) !== many) {
+          return `<b>${word}</b> is ${many ? 'more than one' : 'just one'}, so <b>${many ? set.slice(2).join(' / ') : set.slice(0, 2).join(' / ')}</b>. It's a ${boy ? 'boy' : 'girl'} word: <b>${answer} ${word}</b>.`;
+        }
+        return `<b>${g[0]}</b> is a ${boy ? 'boy' : 'girl'} word: <b>${answer} ${word}</b>. ${why}`;
+      },
+      explain: `<b>${answer} ${word}</b>. ${why}`, table: `<p class="small">${WORDS.genderRule}</p>`, say: `${answer} ${word}`,
     };
   }
 
   // Every drill the gym can run. Past and future tenses mix their regular and irregular groups.
+  // ---------- Listening: hear something from the lessons, pick what it means ----------
+  let LISTEN_POOL = null;
+  function listenPool() {
+    if (LISTEN_POOL) return LISTEN_POOL;
+    const out = [], seen = new Set();
+    const clean = s => String(s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    const add = (es, en, from) => {
+      es = clean(es); en = clean(en);
+      if (!es || !en || seen.has(es.toLowerCase())) return;
+      seen.add(es.toLowerCase());
+      out.push({ es, en, from });
+    };
+    const talk = (t, id) => (t.lines || []).forEach(l => {
+      if (l.them) add(l.them, l.en, id);
+      (l.choices || []).filter(c => c.good).forEach(c => add(c.es, c.en, id));
+    });
+    LESSONS.forEach(L => {
+      (L.phrases || []).forEach(p => add(p.es, p.en, L.id));
+      L.steps.forEach(s => {
+        // teach rows: sentences, or single words and phrases (not lists like "catorce, quince")
+        if (s.type === 'teach') (s.rows || []).forEach(r => {
+          if (typeof r.es !== 'string' || typeof r.en !== 'string') return;
+          if (/[.?!]$/.test(clean(r.es)) || !/[·/,…]/.test(r.es + r.en)) add(r.es, r.en, L.id);
+        });
+        if (s.type === 'talk') talk(s, L.id);
+        if (s.type === 'talkSet') (s.scenes || []).forEach(sc => talk(sc, L.id));
+      });
+    });
+    LISTEN_POOL = out;
+    return out;
+  }
+  function listenQuestion() {
+    const P = listenPool(), it = pick(P);
+    const plainEn = e => e.toLowerCase().replace(/\(.*?\)|[^a-z ]/g, '').trim();
+    const ok = x => x !== it && plainEn(x.en) !== plainEn(it.en);
+    // a few from the same lesson (harder to tell apart), the rest from anywhere
+    const near = shuffle(P.filter(x => x.from === it.from && ok(x))).slice(0, 2);
+    const wrong = near.concat(shuffle(P.filter(x => ok(x) && !near.includes(x))));
+    const options = someOptions(it.en, wrong.map(x => x.en));
+    const byEn = {};
+    P.forEach(x => { byEn[x.en] = byEn[x.en] || x.es; });
+    return {
+      kicker: 'Listening', listen: it.es, prompt: '', hint: 'What did they say?', wide: true,
+      answer: it.en, options,
+      why: chosen => `You heard <b>${it.es}</b>: "${it.en}". "${chosen}" would be <b>${byEn[chosen]}</b>.`,
+      explain: `<b>${it.es}</b> = "${it.en}"`, table: '', say: it.es,
+    };
+  }
+
+  // ---------- My words: the words he tapped to look up ----------
+  function myWords() { return loadSave().myWords || []; }
+  // Saved from a word tap: the Spanish side and a short English meaning.
+  function saveMyWord(word, found) {
+    if (/^\d+$/.test(word)) return;
+    const text = h => h.replace(/<[^>]+>/g, '').trim();
+    let es, en;
+    if (found.lang === 'es') {
+      es = word.toLowerCase();
+      en = found.hits.slice(0, 2).map(h => {
+        const f = h.match(/^a form of <b>(.+?)<\/b> \((.+?)\): (.+)$/);
+        return f ? `${f[2]} (${f[1]}: ${f[3]})` : text(h);
+      }).join(' · ');
+    } else {
+      es = text(found.hits[0]).replace(/\(.*?\)/g, '').split(/ [/·] /)[0].trim();
+      en = word.toLowerCase();
+      if (!es || /[:=]/.test(es)) return;
+    }
+    const save = loadSave();
+    const list = (save.myWords || []).filter(w => w.es !== es);
+    list.unshift({ es, en, n: 0 });
+    save.myWords = list.slice(0, 200);
+    writeSave(save);
+  }
+  function myWordsQuestion() {
+    const list = myWords();
+    if (list.length < 2) {
+      const others = (gym ? gym.drills : []).filter(d => d.id !== 'mine');
+      return (others.length ? pick(others) : DRILLS.find(d => d.id === 'gender')).make();
+    }
+    // newer and less-known words come up more
+    const w = pick(list.slice(0, 12).concat(list.filter(x => x.n === 0)));
+    const toEs = Math.random() < 0.5;
+    const pad = shuffle(WORDS.nouns).map(n => ({ es: n[0], en: n[3] }));
+    const pool = shuffle(list.filter(x => x.es !== w.es && x.en !== w.en)).concat(pad.filter(x => x.es !== w.es && x.en !== w.en));
+    const side = x => toEs ? x.es : x.en;
+    const other = {};
+    pool.forEach(x => { other[side(x)] = other[side(x)] || (toEs ? x.en : x.es); });
+    return {
+      kicker: 'My words', prompt: toEs ? w.en : w.es, promptLang: toEs ? 'en' : 'es',
+      hint: toEs ? 'Say it in Spanish.' : 'What does it mean?', wide: true,
+      answer: side(w), options: someOptions(side(w), pool.map(side)),
+      why: chosen => `<b>${w.es}</b> = ${w.en}. <b>${toEs ? chosen : other[chosen]}</b> = ${toEs ? other[chosen] : chosen}.`,
+      explain: `<b>${w.es}</b> = ${w.en}.`, table: '', say: w.es,
+      onResult(right) {
+        const save = loadSave();
+        const x = (save.myWords || []).find(y => y.es === w.es);
+        if (!x) return '';
+        x.n = right ? x.n + 1 : 0;
+        let note = '';
+        if (x.n >= 3) {
+          save.myWords = save.myWords.filter(y => y !== x);
+          note = `<p class="review-note">✅ 3 right in a row: <b>${w.es}</b> is off your list. You know it now.</p>`;
+        }
+        writeSave(save);
+        return note;
+      },
+    };
+  }
+
   const DRILLS = [];
   PRESENT.groups.forEach(g => DRILLS.push({ id: g.id, section: 'Verbs: present', title: g.title, make: () => verbQuestion(g) }));
   CONJ.tenses.slice(1).forEach(t => DRILLS.push({ id: t.id, section: 'Verbs: past & future', title: t.title, make: () => verbQuestion(pick(t.groups)) }));
@@ -1748,6 +1915,8 @@
   DRILLS.push({ id: 'numbers', section: 'Everyday words', title: 'Numbers & prices', make: numberQuestion });
   DRILLS.push({ id: 'time', section: 'Everyday words', title: 'Time', make: timeQuestion });
   DRILLS.push({ id: 'dates', section: 'Everyday words', title: 'Days & dates', make: dateQuestion });
+  DRILLS.push({ id: 'listen', section: 'Listening & your words', title: '🎧 Listening', make: listenQuestion });
+  DRILLS.push({ id: 'mine', section: 'Listening & your words', title: '📌 My words', make: myWordsQuestion });
 
   // ---------- Rules: every rule and memory trick, open from anywhere ----------
   function groupRules(g, withHead) {
@@ -1829,23 +1998,29 @@
     return `<div class="top"><button class="quit" aria-label="Back">✕</button><span class="top-title">${title}</span>
       <button class="book" aria-label="Rules">📖</button></div>`;
   }
-  function wireTop() {
-    app.querySelector('.quit').addEventListener('click', showHome);
+  function wireTop(onQuit) {
+    app.querySelector('.quit').addEventListener('click', onQuit || showHome);
     app.querySelector('.book').addEventListener('click', openRules);
   }
 
   function showGymSetup() {
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     const on = loadSave().gym || ['ar', 'er', 'ir', 'irr'];
-    const sections = [...new Set(DRILLS.map(d => d.section))];
+    const nMine = myWords().length;
+    const shown = DRILLS.filter(d => d.id !== 'mine' || nMine >= 4);
+    const sections = [...new Set(shown.map(d => d.section))];
     app.innerHTML = `${gymTop('Practice gym')}
       <div class="stage">
         <div class="big-emoji">🏋️</div>
         <h2 class="center">Practice gym</h2>
         <p class="center">Practice as long as you want. Pick what to train.</p>
+        ${loadSave().gymBest ? `<p class="center small">🏆 Your best: <b>${loadSave().gymBest} right in a row</b></p>` : ''}
         ${sections.map(sec => `<p class="kicker center chip-head">${sec}</p>
-          <div class="chips">${DRILLS.filter(d => d.section === sec).map(d =>
-            `<button class="chip${on.includes(d.id) ? ' on' : ''}" data-d="${d.id}">${d.title}</button>`).join('')}</div>`).join('')}
+          <div class="chips">${shown.filter(d => d.section === sec).map(d =>
+            `<button class="chip${on.includes(d.id) ? ' on' : ''}" data-d="${d.id}">${d.title}${d.id === 'mine' ? ` (${nMine})` : ''}</button>`).join('')}</div>
+          ${sec === 'Listening & your words' ? `<p class="center small">${nMine >= 4
+            ? '📌 My words = words you tapped to look up. Get one right 3 times in a row and it comes off the list.'
+            : `📌 Tap any word you don't know, in a lesson or here, and it gets saved. At 4 words you get a <b>My words</b> drill.${nMine ? ` (${nMine} so far)` : ''}`}</p>` : ''}`).join('')}
         <p class="center small">Stuck? Tap 📖 at the top for the rules.</p>
         <p class="kicker center chip-head">Races</p>
         <div class="race-row">${RACES.map(r => {
@@ -1869,7 +2044,7 @@
       const save = loadSave();
       save.gym = ids;
       writeSave(save);
-      gym = { drills: DRILLS.filter(d => ids.includes(d.id)), right: 0, asked: 0, streak: 0, counted: false };
+      gym = { drills: DRILLS.filter(d => ids.includes(d.id)), right: 0, asked: 0, streak: 0, bestRun: 0, counted: false, redo: [], misses: [] };
       gymQuestion();
     });
   }
@@ -1906,11 +2081,54 @@
     }));
   }
 
+  // This round: right out of done, right in a row, and the best run ever (saved).
+  function gymStats() {
+    const best = loadSave().gymBest || 0;
+    return `<div class="gym-stats">
+      <span><b>${gym.right} / ${gym.asked}</b><small>right this round</small></span>
+      <span><b>🔥 ${gym.streak}</b><small>in a row</small></span>
+      <span><b>🏆 ${best}</b><small>best in a row</small></span></div>`;
+  }
+
+  // A missed question comes back 3 questions later, then once more 8 after that if he gets it.
+  function nextGymQ() {
+    const due = gym.redo.filter(r => r.due <= gym.asked).sort((a, b) => a.due - b.due)[0];
+    if (due) { due.q.options = shuffle(due.q.options); return { q: due.q, redo: due }; }
+    return { q: pick(gym.drills).make(), redo: null };
+  }
+  function missKey(q) { return (q.listen || q.prompt) + '|' + q.answer; }
+  function noteGymResult(q, redo, ok) {
+    if (!ok) {
+      const key = missKey(q);
+      if (!gym.misses.some(m => m.key === key)) {
+        // Spanish on top, English under it
+        const [html, hint] = q.listen ? [q.listen, q.answer]
+          : q.prompt.includes('___') ? [blank(q.prompt, q.answer), q.hint]
+          : q.promptLang === 'en' ? [q.answer, q.prompt]
+          : [q.prompt, q.answer];
+        gym.misses.push({ key, html, hint, say: q.say, fixed: false });
+      }
+      if (redo) Object.assign(redo, { due: gym.asked + 3, left: 2 });
+      else gym.redo.push({ q, due: gym.asked + 3, left: 2 });
+    } else if (redo) {
+      redo.left--;
+      if (redo.left > 0) redo.due = gym.asked + 8;
+      else {
+        gym.redo.splice(gym.redo.indexOf(redo), 1);
+        const m = gym.misses.find(x => x.key === missKey(q));
+        if (m) m.fixed = true;
+      }
+    }
+  }
+  function gymQuit() { if (gym && gym.asked) showGymSummary(); else showHome(); }
+
   function gymQuestion() {
-    const q = pick(gym.drills).make();
-    app.innerHTML = `${gymTop(`✓ ${gym.right}${gym.streak >= 3 ? ` · 🔥 ${gym.streak}` : ''}`)}
+    const { q, redo } = nextGymQ();
+    if (window.__vamos) window.__vamos.q = q; // test hook (only with ?test)
+    app.innerHTML = `${gymTop('Practice gym')}
+      ${gymStats()}
       <div class="stage">
-        <p class="kicker">${q.kicker}</p>
+        <p class="kicker">${redo ? '🔁 Missed before · ' : ''}${q.kicker}</p>
         ${q.listen
           ? `<div class="listen"><button class="spk big" data-say="${attr(q.listen)}" aria-label="Play">🔊</button>${spk(q.listen, true)}</div>`
           : `<h2 class="prompt">${blank(q.prompt)}</h2>`}
@@ -1918,7 +2136,7 @@
         <div class="options${q.wide ? '' : ' grid2'}">${q.options.map((o, k) => `<button class="opt" data-k="${k}">${o}</button>`).join('')}</div>
       </div>
       <div class="foot"></div>`;
-    wireTop();
+    wireTop(gymQuit);
     if (q.listen) setTimeout(() => say(q.listen), 250);
     const stage = app.querySelector('.stage'), foot = app.querySelector('.foot');
     const hw = watchHints(stage, [['.prompt', q.promptLang || 'es'], ['.hint', 'en']]);
@@ -1934,12 +2152,29 @@
       if (!ok) b.classList.add('wrong');
       if (!q.listen) stage.querySelector('.prompt').innerHTML = blank(q.prompt, q.answer);
       gym.asked++;
-      if (ok && !hw.used) { gym.right++; gym.streak++; } else gym.streak = 0;
-      let bonus = '';
+      const counts = ok && !hw.used;
+      if (counts) { gym.right++; gym.streak++; } else gym.streak = 0;
+      gym.bestRun = Math.max(gym.bestRun, gym.streak);
+      noteGymResult(q, redo, counts);
+      let bonus = q.onResult ? q.onResult(counts) || '' : '';
+      const save = loadSave(), best = save.gymBest || 0;
+      if (gym.streak > best) {
+        save.gymBest = gym.streak;
+        writeSave(save);
+        // say it once a round, when the old best is passed (not for every answer after)
+        if (best && !gym.newBest) { gym.newBest = true; bonus += `<p class="review-note">🏆 New best: ${gym.streak} in a row! Keep it going.</p>`; }
+      }
+      const hundred = gym.streak && gym.streak % 100 === 0;
+      if (hundred) {
+        save.gym100 = (save.gym100 || 0) + 1;
+        writeSave(save);
+      }
+      if (gym.streak && gym.streak % 25 === 0 && !hundred) bonus += `<p class="review-note">🔥 ${gym.streak} in a row!${gym.streak < 100 ? ` ${100 - gym.streak} more to 100.` : ''}</p>`;
+      app.querySelector('.gym-stats').outerHTML = gymStats();
       if (gym.asked >= 10 && !gym.counted) {
         gym.counted = true;
         bumpStreak();
-        bonus = '<p class="review-note">🔥 10 reps! Today counts for your streak.</p>';
+        bonus += '<p class="review-note">🔥 10 reps! Today counts for your streak.</p>';
       }
       ok ? sfx.good() : sfx.bad();
       foot.innerHTML = `<div class="sheet ${ok ? 'good' : 'bad'}">
@@ -1948,7 +2183,56 @@
         <div class="sheet-row"><button class="btn">Next</button></div></div>`;
       foot.querySelector('.btn').addEventListener('click', gymQuestion);
       setTimeout(() => say(q.say), ok ? 300 : 500);
+      if (hundred) setTimeout(() => celebrate(gym.streak, save.gym100), 700);
     }));
+  }
+
+  // 100 in a row (and every 100 after): a big moment, and a badge on the home screen.
+  function celebrate(n, times) {
+    sfx.done();
+    const bits = ['🎉', '✨', '⭐', '💯', '🔥', '🏆'];
+    const ov = document.createElement('div');
+    ov.className = 'party';
+    ov.innerHTML = `${Array.from({ length: 36 }, (_, i) => `<span class="confetti" style="left:${Math.random() * 100}%;animation-delay:${(Math.random() * 1.6).toFixed(2)}s;animation-duration:${(2.4 + Math.random() * 1.6).toFixed(2)}s">${bits[i % bits.length]}</span>`).join('')}
+      <div class="party-card">
+        <div class="party-num">${n}</div>
+        <h2>${n} in a row!</h2>
+        <p>${n === 100 && times === 1 ? 'You did it. 100 right in a row, no misses. That was the goal, and you hit it. ¡Felicidades!'
+          : n === 100 ? `100 in a row again! That's ${times} times now. ¡Eres una máquina!`
+          : `${n} right in a row. You're past the goal and still going. ¡Increíble!`}</p>
+        <p class="small">🏅 It's on your home screen now.</p>
+        <button class="btn">Keep going</button>
+      </div>`;
+    ov.querySelector('.btn').addEventListener('click', () => ov.remove());
+    document.body.appendChild(ov);
+    setTimeout(() => say(n === 100 ? '¡Cien seguidas! ¡Felicidades!' : '¡Increíble!'), 400);
+  }
+
+  // When he leaves the gym: how the round went, and the ones he missed.
+  function showGymSummary() {
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    const best = loadSave().gymBest || 0;
+    const left = gym.misses.filter(m => !m.fixed).length;
+    app.innerHTML = `${gymTop('Practice gym')}
+      <div class="stage">
+        <div class="big-emoji">💪</div>
+        <h2 class="center">Round done</h2>
+        <div class="stats three">
+          <div class="stat"><b>${gym.right}/${gym.asked}</b><small>right this round</small></div>
+          <div class="stat"><b>🔥 ${gym.bestRun}</b><small>best run this round</small></div>
+          <div class="stat"><b>🏆 ${best}</b><small>best ever</small></div>
+        </div>
+        ${gym.misses.length ? `<p class="kicker">The ones that got you</p>
+          <div class="miss-list">${gym.misses.map(m => `<div class="miss-row${m.fixed ? ' fixed' : ''}">
+            <span><b>${m.html}</b><small>${m.hint}</small></span>
+            ${m.say ? spk(m.say) : ''}${m.fixed ? '<em>✅ got it after</em>' : ''}</div>`).join('')}</div>
+          <p class="center small">${left ? `Watch for ${left === 1 ? 'that one' : `those ${left}`} next time.` : 'You fixed every one before you left. Nice.'}</p>`
+        : '<p class="center">No misses this round. ¡Perfecto!</p>'}
+      </div>
+      <div class="foot"><div class="sheet-row"><button class="btn ghost done-btn">Done</button><button class="btn more-btn">Keep going</button></div></div>`;
+    wireTop();
+    app.querySelector('.more-btn').addEventListener('click', gymQuestion);
+    app.querySelector('.done-btn').addEventListener('click', showHome);
   }
 
   // ---------- lesson complete ----------
