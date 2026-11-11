@@ -1084,7 +1084,9 @@
       <button class="btn bk-switch">⇄ Switch to Spanish</button>
       <button class="btn ghost bk-again">🔁 Spanish again</button>
       <div class="bk-nudge">
-        <p class="small center"><b>Spanish out of step?</b> Move it one sentence. It's saved for next time.</p>
+        <p class="small center"><b>English and Spanish out of step?</b></p>
+        <button class="btn bk-fix">🔧 Fix sync here</button>
+        <p class="small center">Just a little off? Move the Spanish one sentence. Both are saved for next time.</p>
         <div class="bk-nudge-row"><button class="bk-earlier">◀ Back a sentence</button><button class="bk-later">Ahead a sentence ▶</button></div>
         <p class="small center bk-nudge-msg"></p>
       </div>
@@ -1118,6 +1120,7 @@
     stage.querySelector('.bk-switch').addEventListener('click', switchNow);
     stage.querySelector('.bk-earlier').addEventListener('click', () => nudge(-1));
     stage.querySelector('.bk-later').addEventListener('click', () => nudge(1));
+    stage.querySelector('.bk-fix').addEventListener('click', fixSync);
     stage.querySelectorAll('.bk-settings select').forEach(sel => sel.addEventListener('change', () => {
       const k = sel.dataset.k, msg = stage.querySelector('.bk-set-msg');
       const was = settings().order;
@@ -1282,6 +1285,52 @@
     P.al = fresh;
     P.chunk = nextChunk(fresh, d, f, settings().size);
     runChunk(0);
+  }
+
+  // 🔧 Fix sync here: he hears the language he's in (from the start of the sentence), moves the
+  // other one until it says the same thing, and that pair becomes a sync point the rest follows.
+  function fixSync() {
+    if (!P) return;
+    const al = P.al, i = P.i, s = spotNow();
+    const refIsD = s.lang === pair.dLang;
+    const refList = refIsD ? al.a : al.b;
+    const [rLo, rHi] = refIsD ? [al.dS, al.dE] : [al.fS, al.fE];
+    // back to the start of the sentence he was hearing
+    let refT = Math.max(rLo, s.t - 5);
+    for (const p of refList) {
+      if (p.t > s.t - 0.5) break;
+      if (p.t >= s.t - 15) refT = Math.min(p.t + p.len / 2 - 0.25, s.t);
+    }
+    refT = Math.min(Math.max(rLo, refT), rHi - 1);
+    const other = sameSpot(al, s.lang, refT);
+    const nearStart = refIsD ? refT - al.dS < 20 : false;
+    const word = pair.made ? 'Part' : 'Chapter';
+    // Near the chapter's start the English start itself moves; elsewhere the spot stays inside the chapter.
+    const [lo, hi] = refIsD
+      ? (nearStart && i > 0 ? anchorBounds(i) : [al.fS + 0.5, al.fE - 0.5])
+      : [al.dS + 1, al.dE - 1];
+    const back = () => openPlayer(i, refIsD ? refT : other.d, false, { f: refIsD ? other.f : refT });
+    showTune({
+      title: `${word} ${i + 1} of ${pair.sections.length}`,
+      kicker: 'Fix sync here', heading: '',
+      ref: { book: refIsD ? pair.d : pair.f, lang: s.lang, t: refT, what: 'where you are' },
+      move: { book: refIsD ? pair.f : pair.d, lang: refIsD ? pair.fLang : pair.dLang, t: refIsD ? other.f : other.d, lo, hi },
+      big: true,
+      onUse: t => {
+        const d = refIsD ? refT : t, f = refIsD ? t : refT;
+        if (refIsD && nearStart && i > 0) {
+          setAnchor(i, f - (refT - al.dS)); // keeps the same gap back to the chapter's start
+        } else {
+          updateBook(b => {
+            // a new point wins over old ones close by, or ones that now disagree with it
+            b.fine = (b.fine || []).filter(p => Math.abs(p.d - d) > 20 && (p.d < d) === (p.f < f));
+            b.fine.push({ d, f });
+          });
+        }
+        openPlayer(i, d, true, { f });
+      },
+      onBack: back,
+    });
   }
 
   function showFinished() {
@@ -1529,7 +1578,12 @@
       <p class="bk-step"><b>2.</b> Which ${fL} spot starts the same way? ${listenFor}</p>
       <div class="rows bk-cands"><p class="small center">Finding the likely spots… (the first time takes a few seconds)</p></div>`,
       `<button class="btn ghost bk-wider">${wide ? 'Still not there? Look even wider' : 'None of these? Look wider'}</button>
+       <button class="btn ghost bk-type">Set it myself (move it, or type a time)</button>
        <button class="btn ghost bk-skip">Skip for now (use a best guess)</button>`, showBook);
+    ctx.app.querySelector('.bk-type').addEventListener('click', () => {
+      const mine = bookState().anchors[i];
+      tuneStart(i, mine != null ? mine : guessTime(s.start, i), wide, onDone);
+    });
     const wire = root => root.querySelectorAll('.bk-play').forEach(b => b.addEventListener('click', () =>
       playClip(b.dataset.side === 'd' ? pair.d : pair.f, +b.dataset.t, 12, b)));
     wire(ctx.app);
@@ -1554,10 +1608,99 @@
         <span class="row-text"><b>Spot ${k + 1}</b><small>${fL} · ${fmt(c.at)}</small></span>
         <button class="bk-choose" data-t="${c.at}">This one</button></div>`).join('');
     wire(box);
-    box.querySelectorAll('.bk-choose').forEach(b => b.addEventListener('click', () => {
-      updateBook(st => { st.anchors[i] = +b.dataset.t; delete st.skipped[i]; });
-      finish();
-    }));
+    box.querySelectorAll('.bk-choose').forEach(b => b.addEventListener('click', () => tuneStart(i, +b.dataset.t, wide, onDone)));
+  }
+
+  // The range a chapter's start can be in, in the other book: between the starts on either side.
+  function anchorBounds(i) {
+    const s = pair.sections[i], pts = knownPoints(i);
+    const lo = Math.max(0, ...pts.filter(p => p.d < s.start).map(p => p.f));
+    const hiPts = pts.filter(p => p.d > s.start);
+    return [lo + 0.5, (hiPts.length ? hiPts[0].f : pair.f.duration) - 0.5];
+  }
+  // Saves where chapter i starts in the other book: exactly the spot he chose. A saved place in
+  // this chapter keeps its spot in the first book; the other book's spot gets worked out again.
+  function setAnchor(i, t) {
+    updateBook(b => {
+      b.anchors[i] = t;
+      delete b.skipped[i];
+      if (b.pos && b.pos.i === i) b.pos = { i, d: b.pos.d, at: b.pos.at, lang: b.pos.lang };
+    });
+  }
+  // Fine-tuning a chapter start, from one of the spots (or from a guess, to type a time).
+  function tuneStart(i, t, wide, onDone) {
+    const s = pair.sections[i];
+    const [lo, hi] = anchorBounds(i);
+    showTune({
+      title: `${pair.made ? 'Part' : 'Chapter'} ${i + 1} of ${pair.sections.length}`,
+      kicker: 'Fine-tune the start', heading: s.title,
+      ref: { book: pair.d, lang: pair.dLang, t: s.start, what: 'how it starts' },
+      move: { book: pair.f, lang: pair.fLang, t, lo, hi },
+      big: false,
+      onUse: at => { setAnchor(i, at); (onDone || showBook)(); },
+      onBack: () => showFinder(i, wide, onDone),
+    });
+  }
+
+  // h:mm:ss, m:ss or seconds, with or without tenths → seconds (or null)
+  function parseTime(text) {
+    const bits = String(text).trim().replace(',', '.').split(':');
+    if (!bits[0] || bits.length > 3 || bits.some(b => !/^\d+(\.\d+)?$/.test(b))) return null;
+    return bits.reduce((sum, b) => sum * 60 + +b, 0);
+  }
+  function fmtFine(s) {
+    const tenths = Math.round(Math.max(0, s) * 10);
+    return `${fmt(Math.floor(tenths / 10))}.${tenths % 10}`;
+  }
+  // One screen for lining up two spots by ear: hear one book, move the other until they match.
+  // Every move plays the new spot. Times are whole-book times, the same as any audiobook app shows.
+  function showTune(o) {
+    const refL = LANG[o.ref.lang], moveL = LANG[o.move.lang];
+    let t = Math.min(Math.max(o.move.t, o.move.lo), o.move.hi);
+    const steps = (o.big ? [[-300, '−5 min'], [-60, '−1 min'], [60, '+1 min'], [300, '+5 min']] : [])
+      .concat([[-10, '−10s'], [-2, '−2s'], [-0.5, '−½s'], [0.5, '+½s'], [2, '+2s'], [10, '+10s']]);
+    render(o.title, `
+      <p class="kicker">${o.kicker}</p>
+      ${o.heading ? `<h2>${esc(o.heading)}</h2>` : ''}
+      <p class="bk-step"><b>1.</b> Hear ${o.ref.what} in ${refL}:</p>
+      <div class="row"><button class="spk bk-play bk-ref">▶</button>
+        <span class="row-text"><b>${refL}</b><small>${fmt(o.ref.t)}</small></span></div>
+      <p class="bk-step"><b>2.</b> Move the ${moveL} until it starts the same way. Each tap plays from the new spot.</p>
+      <div class="bk-tune-now"><button class="spk bk-play bk-mv">▶</button>
+        <span><small>${moveL} starts at</small><b class="bk-tune-t">${fmtFine(t)}</b></span></div>
+      <div class="bk-tune-steps${o.big ? ' big' : ''}">${steps.map(([d, label]) => `<button data-d="${d}">${label}</button>`).join('')}</div>
+      <div class="bk-tune-type"><input type="text" inputmode="decimal" placeholder="Or type a time, like ${fmt(t)}" aria-label="Type a time">
+        <button class="bk-tune-go">Go</button></div>
+      <p class="small center bk-tune-msg"></p>`,
+      `<button class="btn bk-use">✓ They match: use this spot</button>
+       <button class="btn ghost bk-tune-back">Back</button>`, o.onBack);
+    const app = ctx.app, refBtn = app.querySelector('.bk-ref'), mvBtn = app.querySelector('.bk-mv');
+    const msg = app.querySelector('.bk-tune-msg'), input = app.querySelector('.bk-tune-type input');
+    const playMove = () => { stopClip(); playClip(o.move.book, t, 10, mvBtn); };
+    const moveTo = to => {
+      msg.textContent = '';
+      if (to < o.move.lo || to > o.move.hi) {
+        msg.textContent = `That's outside where this can be (${fmt(o.move.lo)} to ${fmt(o.move.hi)}).`;
+        to = Math.min(Math.max(to, o.move.lo), o.move.hi);
+      }
+      t = Math.round(to * 10) / 10;
+      app.querySelector('.bk-tune-t').textContent = fmtFine(t);
+      input.placeholder = `Or type a time, like ${fmt(t)}`;
+      playMove();
+    };
+    refBtn.addEventListener('click', () => playClip(o.ref.book, o.ref.t, 12, refBtn));
+    mvBtn.addEventListener('click', () => playClip(o.move.book, t, 10, mvBtn));
+    app.querySelectorAll('.bk-tune-steps button').forEach(b => b.addEventListener('click', () => moveTo(t + +b.dataset.d)));
+    const typed = () => {
+      const v = parseTime(input.value);
+      if (v == null) { msg.textContent = 'Type it like 58:40 or 1:02:15.'; return; }
+      input.value = '';
+      moveTo(v);
+    };
+    app.querySelector('.bk-tune-go').addEventListener('click', typed);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') typed(); });
+    app.querySelector('.bk-use').addEventListener('click', () => { stopClip(); o.onUse(t); });
+    app.querySelector('.bk-tune-back').addEventListener('click', () => { stopClip(); o.onBack(); });
   }
 
   window.BOOKS = { open, stop, readBook, decodeRange, pausesIn, alignRange, alignSection, mapThrough, get pair() { return pair; }, get player() { return P; }, els };

@@ -175,6 +175,15 @@
     if (!save.opened.includes(id)) { save.opened.push(id); writeSave(save); }
   }
 
+  // What Profe (the talking tutor) can go over: the lessons he has done, then the gym topics.
+  function tutorTopics() {
+    const done = LESSONS.filter(L => loadSave().lessons[L.id]).map(L => L.title);
+    return (done.length ? done : LESSONS.map(L => L.title)).concat([
+      'This & that (este, ese, aquel)', 'My & mine (mi, mío, su, suyo)', 'Boy or girl words (el, la)',
+      'Verbs in the present', 'Verbs in the past', 'Numbers & prices', 'Telling time', 'Days & dates', 'Colors',
+    ].filter(t => !done.includes(t)));
+  }
+
   // ---------- home ----------
   function showHome() {
     if ('speechSynthesis' in window) speechSynthesis.cancel();
@@ -192,6 +201,7 @@
       <div class="tools">
         <button class="tool rules-btn"><span>📖</span><b>Rules</b><small>Look anything up</small></button>
         <button class="tool gym-btn"><span>🏋️</span><b>Practice gym</b><small>Verbs, numbers, time, colors & more</small></button>
+        ${window.TUTOR && TUTOR.available() ?'<button class="tool wide talk-btn"><span>🗣️</span><span class="tool-text"><b>Talk with Profe <span class="new-tag">NEW</span></b><small>Talk out loud with a Spanish tutor. Profe talks back, fixes your mistakes and goes over what you\'ve learned.</small></span></button>' : ''}
         ${BOOKS_ON ? '<button class="tool wide books-btn"><span>📚</span><span class="tool-text"><b>Books <span class="new-tag">TESTING</span></b><small>Hear an audiobook in English, then in Spanish. Brand new: tell your brother what works and what needs fixing!</small></span></button>' : ''}
       </div>
       <section class="lessons"></section>
@@ -208,6 +218,8 @@
     app.querySelector('.rules-btn').addEventListener('click', openRules);
     app.querySelector('.gym-btn').addEventListener('click', showGymSetup);
     if (BOOKS_ON) app.querySelector('.books-btn').addEventListener('click', () => BOOKS.open({ app, top: gymTop, openRules, showHome }));
+    const talkBtn = app.querySelector('.talk-btn');
+    if (talkBtn) talkBtn.addEventListener('click', () => TUTOR.open({ app, top: gymTop, openRules, showHome, topics: tutorTopics }));
     const list = app.querySelector('.lessons');
     let unit = null;
     LESSONS.forEach((L, i) => {
