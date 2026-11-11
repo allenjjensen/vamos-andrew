@@ -448,26 +448,33 @@
     };
   }
 
-  // Known matching points (driver time → follower time), in order.
+  // Known matching points (driver time → follower time), in order: the chapter starts he matched
+  // and the spots he fixed with 🔧 or the sentence buttons, so a guess carries a fix along with it.
   function knownPoints(skip) {
     const st = bookState();
     const pts = [];
     pair.sections.forEach((s, i) => {
       if (i !== skip && st.anchors[i] != null) pts.push({ d: s.start, f: st.anchors[i] });
     });
-    if (!pts.length || pts[0].d > 0) pts.unshift({ d: 0, f: 0 });
-    return pts.sort((a, b) => a.d - b.d);
+    (st.fine || []).forEach(p => pts.push({ d: p.d, f: p.f }));
+    if (!pts.length || Math.min(...pts.map(p => p.d)) > 0) pts.push({ d: 0, f: 0 });
+    pts.sort((a, b) => a.d - b.d);
+    // a point that goes backwards against the one before it can't be right: leave it out
+    return pts.filter((p, k) => !k || p.f > pts.slice(0, k).reduce((m, q) => Math.max(m, q.f), -1));
   }
   // Where a driver time probably is in the follower: between two known points if there are
-  // known points on both sides, otherwise carried on at the pace of the last stretch.
+  // known points on both sides, otherwise carried on from the last one. Past the last point it
+  // goes at the pace of a long stretch (20+ minutes) of known points, else the two books' overall pace.
   function guessTime(t, skip) {
     const pts = knownPoints(skip);
     const after = pts.find(p => p.d > t);
     const before = pts.filter(p => p.d <= t);
     const a = before[before.length - 1];
     if (after) return a.f + (t - a.d) * (after.f - a.f) / Math.max(1, after.d - a.d);
-    const b = before[before.length - 2];
-    const pace = b && a.d - b.d > 60 ? (a.f - b.f) / (a.d - b.d) : pair.f.duration / pair.d.duration;
+    const book = pair.f.duration / pair.d.duration;
+    const far = before.filter(p => a.d - p.d >= 1200).pop();
+    const long = far ? (a.f - far.f) / (a.d - far.d) : 0;
+    const pace = long > book * 0.75 && long < book * 1.33 ? long : book;
     return Math.min(pair.f.duration, a.f + (t - a.d) * pace);
   }
 
@@ -670,7 +677,11 @@
     }
     const d1 = best ? best.p.t : d0 + T;
     let f1 = best && best.p.f != null ? best.p.f : snapTo(al.b, mapThrough(al.points, d1), Math.max(1.5, T * 0.12));
-    if (f1 <= f0 + 0.5) f1 = f0 + (d1 - d0) * al.pace;
+    // the other language's half should be about as long as this one: never a blip, never a lecture
+    const local = mapThrough(al.points, d1) - mapThrough(al.points, d0);
+    const want = local > 0 ? local : (d1 - d0) * al.pace;
+    if (f1 - f0 < want * 0.5 || f1 - f0 > want * 2) f1 = f0 + want;
+    f1 = Math.min(f1, al.fE);
     return { d0, f0, d1, f1 };
   }
   function rangeOf(chunk, lang) { return lang === pair.dLang ? [chunk.d0, chunk.d1] : [chunk.f0, chunk.f1]; }
@@ -1306,8 +1317,13 @@
     const nearStart = refIsD ? refT - al.dS < 20 : false;
     const word = pair.made ? 'Part' : 'Chapter';
     // Near the chapter's start the English start itself moves; elsewhere the spot stays inside the chapter.
+    // The other book can move past this chapter's guessed end (that guess may be what's wrong),
+    // up to the next chapter start he matched himself.
+    const st = bookState();
+    const nextMatched = pair.sections.findIndex((x, j) => j > i && st.anchors[j] != null);
+    const fMax = (nextMatched >= 0 ? st.anchors[nextMatched] : pair.f.duration) - 0.5;
     const [lo, hi] = refIsD
-      ? (nearStart && i > 0 ? anchorBounds(i) : [al.fS + 0.5, al.fE - 0.5])
+      ? (nearStart && i > 0 ? anchorBounds(i) : [al.fS + 0.5, fMax])
       : [al.dS + 1, al.dE - 1];
     const back = () => openPlayer(i, refIsD ? refT : other.d, false, { f: refIsD ? other.f : refT });
     showTune({
@@ -1669,7 +1685,7 @@
       <div class="bk-tune-now"><button class="spk bk-play bk-mv">▶</button>
         <span><small>${moveL} starts at</small><b class="bk-tune-t">${fmtFine(t)}</b></span></div>
       <div class="bk-tune-steps${o.big ? ' big' : ''}">${steps.map(([d, label]) => `<button data-d="${d}">${label}</button>`).join('')}</div>
-      <div class="bk-tune-type"><input type="text" inputmode="decimal" placeholder="Or type a time, like ${fmt(t)}" aria-label="Type a time">
+      <div class="bk-tune-type"><input type="text" inputmode="numeric" autocomplete="off" placeholder="Or type numbers: ${fmt(t).replace(/:/g, '')} = ${fmt(t)}" aria-label="Type a time (numbers only)">
         <button class="bk-tune-go">Go</button></div>
       <p class="small center bk-tune-msg"></p>`,
       `<button class="btn bk-use">✓ They match: use this spot</button>
@@ -1685,7 +1701,7 @@
       }
       t = Math.round(to * 10) / 10;
       app.querySelector('.bk-tune-t').textContent = fmtFine(t);
-      input.placeholder = `Or type a time, like ${fmt(t)}`;
+      input.placeholder = `Or type numbers: ${fmt(t).replace(/:/g, '')} = ${fmt(t)}`;
       playMove();
     };
     refBtn.addEventListener('click', () => playClip(o.ref.book, o.ref.t, 12, refBtn));
@@ -1693,12 +1709,20 @@
     app.querySelectorAll('.bk-tune-steps button').forEach(b => b.addEventListener('click', () => moveTo(t + +b.dataset.d)));
     const typed = () => {
       const v = parseTime(input.value);
-      if (v == null) { msg.textContent = 'Type it like 58:40 or 1:02:15.'; return; }
+      if (v == null) { msg.textContent = 'Type numbers only, like 5840 for 58:40.'; return; }
       input.value = '';
       moveTo(v);
     };
     app.querySelector('.bk-tune-go').addEventListener('click', typed);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') typed(); });
+    // numbers only: the colons fill in as he types (5840 → 58:40, 10215 → 1:02:15)
+    input.addEventListener('input', () => {
+      const n = input.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 6);
+      input.value = n.length <= 2 ? n
+        : n.length <= 4 ? `${n.slice(0, -2)}:${n.slice(-2)}`
+          : `${n.slice(0, -4)}:${n.slice(-4, -2)}:${n.slice(-2)}`;
+      msg.textContent = '';
+    });
     app.querySelector('.bk-use').addEventListener('click', () => { stopClip(); o.onUse(t); });
     app.querySelector('.bk-tune-back').addEventListener('click', () => { stopClip(); o.onBack(); });
   }
