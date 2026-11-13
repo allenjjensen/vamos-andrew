@@ -1316,34 +1316,28 @@
     const other = sameSpot(al, s.lang, refT);
     const nearStart = refIsD ? refT - al.dS < 20 : false;
     const word = pair.made ? 'Part' : 'Chapter';
-    // Near the chapter's start the English start itself moves; elsewhere the spot stays inside the chapter.
-    // The other book can move past this chapter's guessed end (that guess may be what's wrong),
-    // up to the next chapter start he matched himself.
-    const st = bookState();
-    const nextMatched = pair.sections.findIndex((x, j) => j > i && st.anchors[j] != null);
-    const fMax = (nextMatched >= 0 ? st.anchors[nextMatched] : pair.f.duration) - 0.5;
-    const [lo, hi] = refIsD
-      ? (nearStart && i > 0 ? anchorBounds(i) : [al.fS + 0.5, fMax])
-      : [al.dS + 1, al.dE - 1];
+    // Near the chapter's start the English start itself moves; elsewhere it saves a sync point.
+    // The other book can go anywhere: his newest match wins over older ones that disagree.
     const back = () => openPlayer(i, refIsD ? refT : other.d, false, { f: refIsD ? other.f : refT });
     showTune({
       title: `${word} ${i + 1} of ${pair.sections.length}`,
       kicker: 'Fix sync here', heading: '',
       ref: { book: refIsD ? pair.d : pair.f, lang: s.lang, t: refT, what: 'where you are' },
-      move: { book: refIsD ? pair.f : pair.d, lang: refIsD ? pair.fLang : pair.dLang, t: refIsD ? other.f : other.d, lo, hi },
+      move: { book: refIsD ? pair.f : pair.d, lang: refIsD ? pair.fLang : pair.dLang, t: refIsD ? other.f : other.d },
       big: true,
       onUse: t => {
         const d = refIsD ? refT : t, f = refIsD ? t : refT;
         if (refIsD && nearStart && i > 0) {
-          setAnchor(i, f - (refT - al.dS)); // keeps the same gap back to the chapter's start
+          setAnchor(i, Math.max(0, f - (refT - al.dS))); // keeps the same gap back to the chapter's start
         } else {
           updateBook(b => {
-            // a new point wins over old ones close by, or ones that now disagree with it
-            b.fine = (b.fine || []).filter(p => Math.abs(p.d - d) > 20 && (p.d < d) === (p.f < f));
+            dropClashes(b, d, f, -1);
             b.fine.push({ d, f });
           });
         }
-        openPlayer(i, d, true, { f });
+        // the Spanish spot may now be in another chapter: play that one
+        const j = pair.sections.findIndex(x => d >= x.start && d < x.end);
+        openPlayer(j >= 0 ? j : i, d, true, { f });
       },
       onBack: back,
     });
@@ -1627,17 +1621,21 @@
     box.querySelectorAll('.bk-choose').forEach(b => b.addEventListener('click', () => tuneStart(i, +b.dataset.t, wide, onDone)));
   }
 
-  // The range a chapter's start can be in, in the other book: between the starts on either side.
-  function anchorBounds(i) {
-    const s = pair.sections[i], pts = knownPoints(i);
-    const lo = Math.max(0, ...pts.filter(p => p.d < s.start).map(p => p.f));
-    const hiPts = pts.filter(p => p.d > s.start);
-    return [lo + 0.5, (hiPts.length ? hiPts[0].f : pair.f.duration) - 0.5];
+  // His newest match always wins: older matches that now run backwards against it (or sit
+  // right next to it) are dropped, so he can put a spot anywhere in the book.
+  function dropClashes(b, d, f, keepChapter) {
+    pair.sections.forEach((s, j) => {
+      const a = b.anchors[j];
+      // a dropped chapter start gets guessed from his new match (he can still 🎯 it later)
+      if (j !== keepChapter && a != null && (s.start === d || (s.start < d) !== (a < f))) { delete b.anchors[j]; b.skipped[j] = true; }
+    });
+    b.fine = (b.fine || []).filter(p => Math.abs(p.d - d) > 20 && (p.d < d) === (p.f < f));
   }
   // Saves where chapter i starts in the other book: exactly the spot he chose. A saved place in
   // this chapter keeps its spot in the first book; the other book's spot gets worked out again.
   function setAnchor(i, t) {
     updateBook(b => {
+      dropClashes(b, pair.sections[i].start, t, i);
       b.anchors[i] = t;
       delete b.skipped[i];
       if (b.pos && b.pos.i === i) b.pos = { i, d: b.pos.d, at: b.pos.at, lang: b.pos.lang };
@@ -1646,13 +1644,12 @@
   // Fine-tuning a chapter start, from one of the spots (or from a guess, to type a time).
   function tuneStart(i, t, wide, onDone) {
     const s = pair.sections[i];
-    const [lo, hi] = anchorBounds(i);
     showTune({
       title: `${pair.made ? 'Part' : 'Chapter'} ${i + 1} of ${pair.sections.length}`,
       kicker: 'Fine-tune the start', heading: s.title,
       ref: { book: pair.d, lang: pair.dLang, t: s.start, what: 'how it starts' },
-      move: { book: pair.f, lang: pair.fLang, t, lo, hi },
-      big: false,
+      move: { book: pair.f, lang: pair.fLang, t },
+      big: true,
       onUse: at => { setAnchor(i, at); (onDone || showBook)(); },
       onBack: () => showFinder(i, wide, onDone),
     });
@@ -1672,7 +1669,9 @@
   // Every move plays the new spot. Times are whole-book times, the same as any audiobook app shows.
   function showTune(o) {
     const refL = LANG[o.ref.lang], moveL = LANG[o.move.lang];
-    let t = Math.min(Math.max(o.move.t, o.move.lo), o.move.hi);
+    // anywhere in the book: no other limit (his newest match wins over older ones)
+    const end = Math.max(1, o.move.book.duration - 0.5);
+    let t = Math.min(Math.max(o.move.t, 0), end);
     const steps = (o.big ? [[-300, '−5 min'], [-60, '−1 min'], [60, '+1 min'], [300, '+5 min']] : [])
       .concat([[-10, '−10s'], [-2, '−2s'], [-0.5, '−½s'], [0.5, '+½s'], [2, '+2s'], [10, '+10s']]);
     render(o.title, `
@@ -1695,10 +1694,8 @@
     const playMove = () => { stopClip(); playClip(o.move.book, t, 10, mvBtn); };
     const moveTo = to => {
       msg.textContent = '';
-      if (to < o.move.lo || to > o.move.hi) {
-        msg.textContent = `That's outside where this can be (${fmt(o.move.lo)} to ${fmt(o.move.hi)}).`;
-        to = Math.min(Math.max(to, o.move.lo), o.move.hi);
-      }
+      if (to < 0) { msg.textContent = 'That\'s the very start of the book.'; to = 0; }
+      if (to > end) { msg.textContent = `The book ends at ${fmt(o.move.book.duration)}.`; to = end; }
       t = Math.round(to * 10) / 10;
       app.querySelector('.bk-tune-t').textContent = fmtFine(t);
       input.placeholder = `Or type numbers: ${fmt(t).replace(/:/g, '')} = ${fmt(t)}`;
