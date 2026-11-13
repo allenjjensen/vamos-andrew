@@ -603,3 +603,23 @@ p.version-tag { margin: -4px 0 10px; }
 .bk-tune-go { border: 0; border-radius: 12px; padding: 0 18px; background: var(--teal); color: #fff; font-weight: 800; }
 .bk-tune-msg { min-height: 1.2em; margin: 8px 0 0; color: var(--bad); font-weight: 700; }
 .bk-fix { margin: 4px 0 6px; background: var(--teal); box-shadow: 0 4px 0 var(--teal-dark); }
+
+/* ---------- Job talk (spoken scenes) ---------- */
+.sc-list { margin-top: 14px; }
+.sc-done { color: var(--good); font-size: .78rem; font-weight: 800; }
+.sc-them-en { display: block; color: var(--muted); font-size: .85rem; margin-top: 2px; transition: filter .2s; }
+.sc-them-en.blur { filter: blur(5px); cursor: pointer; user-select: none; }
+.tt-msg.me small { display: block; font-size: .82rem; margin-top: 4px; opacity: .92; }
+.tt-msg.sc-miss { background: var(--card); color: var(--ink); border: 2px dashed var(--muted); }
+.tt-msg.sc-skipped { background: var(--card); color: var(--muted); border: 2px solid var(--line); }
+.tt-msg.sc-draft { opacity: .7; }
+.sc-say { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.sc-say small { color: var(--muted); font-weight: 800; font-size: .8rem; }
+.sc-en-say { font-size: 1.15rem; }
+.sc-tip { margin: 4px 0 0; }
+.sc-answer { display: flex; align-items: center; gap: 4px; font-size: 1.15rem; }
+.sc-say[hidden], .sc-answer[hidden], .sc-tip[hidden], .sc-wait[hidden] { display: none; }
+.sc-wait { margin: 0; font-weight: 800; }
+.sc-btns { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.sc-btns.off { opacity: .4; }
+.sc-show, .sc-skip { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 99px; padding: 8px 12px; font-weight: 800; }
